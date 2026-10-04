@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15
+    container_name: parcial_db
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-admin123}
+      POSTGRES_DB: ${POSTGRES_DB:-catalogo_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+
+  backend:
+    build: 
+      context: ./src
+      dockerfile: Dockerfile
+    container_name: parcial_backend
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-admin}:${POSTGRES_PASSWORD:-admin123}@db:5432/${POSTGRES_DB:-catalogo_db}
+      - SECRET_KEY=${SECRET_KEY:-supersecretkey}
+    depends_on:
+      - db
+    volumes:
+      - ./src:/app
+      - ./data:/data
+
+volumes:
+  db_data:

@@ -1,0 +1,8 @@
+Resultados pytest:
+============================= test session starts ==============================
+test_main.py::test_login_invalid_credentials_P01 PASSED                  [ 20%]
+test_main.py::test_login_inactive_user_P02 PASSED                        [ 40%]
+test_main.py::test_create_service_unauthorized_P03 PASSED                [ 60%]
+test_main.py::test_create_service_duplicate_code_P05 PASSED              [ 80%]
+test_main.py::test_create_service_min_max_P09 PASSED                     [100%]
+======================== 5 passed, 2 warnings in 2.36s =========================
