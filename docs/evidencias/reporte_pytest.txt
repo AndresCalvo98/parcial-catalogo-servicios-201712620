@@ -1,8 +1,31 @@
-Resultados pytest:
 ============================= test session starts ==============================
-test_main.py::test_login_invalid_credentials_P01 PASSED                  [ 20%]
-test_main.py::test_login_inactive_user_P02 PASSED                        [ 40%]
-test_main.py::test_create_service_unauthorized_P03 PASSED                [ 60%]
-test_main.py::test_create_service_duplicate_code_P05 PASSED              [ 80%]
-test_main.py::test_create_service_min_max_P09 PASSED                     [100%]
-======================== 5 passed, 2 warnings in 2.36s =========================
+platform linux -- Python 3.11.17, pytest-8.1.1, pluggy-1.6.0 -- /usr/local/bin/python3.11
+cachedir: .pytest_cache
+rootdir: /app
+plugins: anyio-4.15.1
+collecting ... collected 12 items
+
+tests/test_main.py::test_P01_inicio_sesion_valido_e_invalido PASSED      [  8%]
+tests/test_main.py::test_P02_acceso_sin_sesion_cierre_sesion_y_usuario_inactivo PASSED [ 16%]
+tests/test_main.py::test_P03_usuario_consulta_intenta_modificar_datos PASSED [ 25%]
+tests/test_main.py::test_P04_crear_jerarquia_y_asignar_usuario PASSED    [ 33%]
+tests/test_main.py::test_P05_codigo_duplicado_o_referencia_inexistente PASSED [ 41%]
+tests/test_main.py::test_P06_importar_archivo_original PASSED            [ 50%]
+tests/test_main.py::test_P07_repetir_importacion_idempotente PASSED      [ 58%]
+tests/test_main.py::test_P08_revisar_SE12_y_atributos_ausentes PASSED    [ 66%]
+tests/test_main.py::test_P09_crear_servicio_minimo_mayor_que_maximo PASSED [ 75%]
+tests/test_main.py::test_P10_buscar_y_filtrar_servicios PASSED           [ 83%]
+tests/test_main.py::test_P11_asignar_responsable_seccion_distinta PASSED [ 91%]
+tests/test_main.py::test_P12_persistencia_sin_eliminar_volumenes PASSED  [100%]
+
+=============================== warnings summary ===============================
+../usr/local/lib/python3.11/site-packages/starlette/testclient.py:41
+  /usr/local/lib/python3.11/site-packages/starlette/testclient.py:41: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    [], typing.ContextManager[anyio.abc.BlockingPortal]
+
+../usr/local/lib/python3.11/site-packages/httpx/_client.py:680
+  /usr/local/lib/python3.11/site-packages/httpx/_client.py:680: DeprecationWarning: The 'app' shortcut is now deprecated. Use the explicit style 'transport=WSGITransport(app=...)' instead.
+    warnings.warn(message, DeprecationWarning)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================== 12 passed, 2 warnings in 8.23s ========================

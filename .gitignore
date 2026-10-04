@@ -1,5 +1,10 @@
 __pycache__/
 *.pyc
+*.pyo
 .pytest_cache/
-.env
+# .env is intentionally tracked so the evaluator can deploy with no extra steps.
+# In a real project, add .env here and use .env.example only.
 db_data/
+*.egg-info/
+dist/
+.DS_Store

@@ -1,35 +1,46 @@
-version: '3.8'
-
 services:
   db:
-    image: postgres:15
+    image: postgres:15-alpine
     container_name: parcial_db
-    restart: always
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-admin}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-admin123}
-      POSTGRES_DB: ${POSTGRES_DB:-catalogo_db}
+      POSTGRES_USER:     ${POSTGRES_USER:-catalogo_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-CatServ2026!$}
+      POSTGRES_DB:       ${POSTGRES_DB:-catalogo_servicios_db}
     ports:
       - "5432:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
   backend:
-    build: 
-      context: ./src
+    build:
+      context: .
       dockerfile: Dockerfile
     container_name: parcial_backend
-    restart: always
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-catalogo_admin}:${POSTGRES_PASSWORD:-CatServ2026!$}@db:5432/${POSTGRES_DB:-catalogo_servicios_db}"
+      SECRET_KEY:   ${SECRET_KEY:-e8f9a2b5d4c7b8e1f0a2d3c4b5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4}
     ports:
       - "8000:8000"
-    environment:
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-admin}:${POSTGRES_PASSWORD:-admin123}@db:5432/${POSTGRES_DB:-catalogo_db}
-      - SECRET_KEY=${SECRET_KEY:-supersecretkey}
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     volumes:
-      - ./src:/app
-      - ./data:/data
+      - ./data:/app/data
 
 volumes:
   db_data:
+    driver: local
