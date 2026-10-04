@@ -172,7 +172,8 @@ async function apiFetch(url, options = {}) {
     options.headers = options.headers || {};
     if (token) options.headers["Authorization"] = `Bearer ${token}`;
     const res = await fetch(url, options);
-    if (res.status === 401) {
+    if (res.status === 401 && token) {
+        // Token was sent but server rejected it (expired or invalid)
         handleLogout(true);
         throw new Error("Unauthorized");
     }
@@ -225,17 +226,36 @@ async function doLogin(username, password) {
     }
 }
 
-async function handleLogout(silent = false) {
-    if (token) {
-        try { await apiFetch("/logout", { method: "POST" }); } catch (_) {}
-    }
+function handleLogout(silent = false) {
     token       = null;
     currentUser = null;
     localStorage.removeItem("token");
     localStorage.removeItem("user");
     renderAuthUI();
-    cargarServicios();
-    cargarKPIs();
+
+    // Reset table cleanly without network loop
+    const tbody = document.getElementById("serviciosTbody");
+    if (tbody) {
+        tbody.innerHTML = `<tr><td colspan="10" class="table-empty">
+            <svg width="40" height="40" fill="none" viewBox="0 0 24 24" stroke="#94a3b8" stroke-width="1.5"><path d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+            <span>Inicia sesión para consultar el catálogo de servicios</span>
+        </td></tr>`;
+    }
+
+    const orgContainer = document.getElementById("orgTreeContainer");
+    if (orgContainer) {
+        orgContainer.innerHTML = `<div class="table-empty">
+            <svg width="48" height="48" fill="none" viewBox="0 0 24 24" stroke="#94a3b8" stroke-width="1.5"><path d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+            <span>Inicia sesión para visualizar la jerarquía organizacional</span>
+        </div>`;
+    }
+
+    // Reset KPIs
+    const kpiTotal = document.getElementById("kpiTotalServicios");
+    const kpiAct = document.getElementById("kpiActivos");
+    if (kpiTotal) kpiTotal.textContent = "—";
+    if (kpiAct) kpiAct.textContent = "—";
+
     if (!silent) showToast("Sesión cerrada correctamente");
 }
 
@@ -354,6 +374,13 @@ async function cargarKPIs() {
 // ─── Servicios Table ─────────────────────────────────────
 async function cargarServicios() {
     const tbody = document.getElementById("serviciosTbody");
+    if (!token) {
+        tbody.innerHTML = `<tr><td colspan="10" class="table-empty">
+            <svg width="40" height="40" fill="none" viewBox="0 0 24 24" stroke="#94a3b8" stroke-width="1.5"><path d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+            <span>Inicia sesión para consultar el catálogo de servicios</span>
+        </td></tr>`;
+        return;
+    }
     tbody.innerHTML = '<tr><td colspan="10" class="table-empty"><div class="spinner"></div><span>Consultando catálogo…</span></td></tr>';
 
     const params = new URLSearchParams();
@@ -617,6 +644,13 @@ async function desactivarServicio(id) {
 // ─── Organización ────────────────────────────────────────
 async function cargarOrganizacion() {
     const container = document.getElementById("orgTreeContainer");
+    if (!token) {
+        container.innerHTML = `<div class="table-empty">
+            <svg width="48" height="48" fill="none" viewBox="0 0 24 24" stroke="#94a3b8" stroke-width="1.5"><path d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+            <span>Inicia sesión para visualizar la jerarquía organizacional</span>
+        </div>`;
+        return;
+    }
     container.innerHTML = '<div class="table-empty"><div class="spinner"></div><span>Cargando jerarquía…</span></div>';
 
     try {
