@@ -819,6 +819,12 @@ async function cargarCMDB() {
     const tbody = document.getElementById("cmdbTbody");
     tbody.innerHTML = `<tr><td colspan="9" class="table-empty"><div class="spinner"></div><span>Cargando inventario CMDB…</span></td></tr>`;
 
+    if (!token) {
+        tbody.innerHTML = `<tr><td colspan="9" class="table-empty">Inicia sesión para consultar los dispositivos de la CMDB.</td></tr>`;
+        document.getElementById("cmdbPageInfo").textContent = "Requiere autenticación";
+        return;
+    }
+
     const search    = document.getElementById("cmdbSearchInput").value.trim();
     const categoria = document.getElementById("cmdbFilterCategoria").value;
     const estado    = document.getElementById("cmdbFilterEstado").value;
@@ -827,22 +833,23 @@ async function cargarCMDB() {
         skip: currentCMDBPage * PAGE_SIZE,
         limit: PAGE_SIZE
     });
-    if (search)    params.set("search", search);
-    if (categoria) params.set("categoria_id", categoria);
-    if (estado)    params.set("estado", estado);
+    if (search)    params.set("q", search);
+    if (categoria) params.set("clasificacion_id", categoria);
+    if (estado)    params.set("estado_actual", estado);
 
     try {
-        const res = await apiFetch(`/api/cmdb/cis?${params.toString()}`);
+        const res = await apiFetch(`/api/cmdb/items?${params.toString()}`);
         if (!res.ok) throw new Error("Error consultando CMDB");
-        const cis = await res.json();
+        const data = await res.json();
+        const cis = Array.isArray(data) ? data : (data.items || []);
 
-        renderCMDBTable(cis);
+        renderCMDBTable(cis, data.total);
     } catch (err) {
         tbody.innerHTML = `<tr><td colspan="9" class="table-empty text-danger">Error: ${err.message}</td></tr>`;
     }
 }
 
-function renderCMDBTable(cis) {
+function renderCMDBTable(cis, totalCount) {
     const tbody = document.getElementById("cmdbTbody");
     if (!cis || cis.length === 0) {
         tbody.innerHTML = `<tr><td colspan="9" class="table-empty">No se encontraron CIs con los filtros indicados.</td></tr>`;
@@ -851,21 +858,23 @@ function renderCMDBTable(cis) {
     }
 
     tbody.innerHTML = cis.map(c => {
-        const cat = c.categoria ? escapeHtml(c.categoria.nombre) : "Sin categoría";
-        const ip = c.ip_address ? `<code>${escapeHtml(c.ip_address)}</code>` : `<span class="text-muted">N/A</span>`;
+        const cat = c.clasificacion_nombre || (c.categoria ? c.categoria.nombre : "General");
+        const ipVal = c.direccion_ip || c.ip_address;
+        const ip = ipVal ? `<code>${escapeHtml(ipVal)}</code>` : `<span class="text-muted">N/A</span>`;
         const serie = c.numero_serie ? escapeHtml(c.numero_serie) : `<span class="text-muted">N/A</span>`;
-        const srvCount = c.servicios ? c.servicios.length : 0;
+        const srvCount = c.servicios_afectados_codigos ? c.servicios_afectados_codigos.length : (c.servicios ? c.servicios.length : 0);
         const srvBadge = srvCount > 0 
             ? `<span class="badge badge-blue">${srvCount} servicio(s)</span>`
             : `<span class="text-muted" style="font-size:12px;">Directo</span>`;
+        const estadoVal = c.estado_actual || c.estado || "Operativo";
 
         return `
             <tr>
                 <td><code class="ticket-badge-code">${escapeHtml(c.codigo)}</code></td>
                 <td><strong>${escapeHtml(c.nombre)}</strong></td>
-                <td><span class="badge badge-purple">${cat}</span></td>
+                <td><span class="badge badge-purple">${escapeHtml(cat)}</span></td>
                 <td>${escapeHtml(c.tipo_ci || 'Dispositivo')}</td>
-                <td><span class="badge ${c.estado === 'Operativo' ? 'badge-s' : 'badge-orange'}">${escapeHtml(c.estado)}</span></td>
+                <td><span class="badge ${estadoVal === 'Operativo' ? 'badge-s' : 'badge-orange'}">${escapeHtml(estadoVal)}</span></td>
                 <td>${ip}</td>
                 <td>${serie}</td>
                 <td>${srvBadge}</td>
@@ -878,7 +887,8 @@ function renderCMDBTable(cis) {
 
     const start = currentCMDBPage * PAGE_SIZE + 1;
     const end   = start + cis.length - 1;
-    document.getElementById("cmdbPageInfo").textContent = `Mostrando ${start}–${end}`;
+    const totalTxt = totalCount !== undefined ? ` de ${totalCount}` : "";
+    document.getElementById("cmdbPageInfo").textContent = `Mostrando ${start}–${end}${totalTxt}`;
     document.getElementById("cmdbPageBadge").textContent = currentCMDBPage + 1;
 }
 
@@ -894,8 +904,9 @@ async function abrirFichaCI(ciId) {
         if (!res.ok) throw new Error("No se pudo cargar el CI");
         const ci = await res.json();
 
+        const cat = ci.clasificacion_nombre || (ci.categoria ? ci.categoria.nombre : 'General');
         document.getElementById("ciModalTitle").textContent = `${ci.codigo} — ${ci.nombre}`;
-        document.getElementById("ciModalSubtitle").textContent = `Categoría: ${ci.categoria ? ci.categoria.nombre : 'General'} • Tipo: ${ci.tipo_ci}`;
+        document.getElementById("ciModalSubtitle").textContent = `Categoría: ${cat} • Tipo: ${ci.tipo_ci || 'Dispositivo'}`;
 
         modalBody.innerHTML = `
             <div class="ficha-item">
@@ -904,19 +915,19 @@ async function abrirFichaCI(ciId) {
             </div>
             <div class="ficha-item">
                 <span class="ficha-key">Estado Operativo</span>
-                <span class="ficha-val">${ci.estado}</span>
+                <span class="ficha-val">${ci.estado_actual || ci.estado || 'Operativo'}</span>
             </div>
             <div class="ficha-item">
                 <span class="ficha-key">Dirección IP</span>
-                <span class="ficha-val">${ci.ip_address || 'N/A'}</span>
+                <span class="ficha-val">${ci.direccion_ip || ci.ip_address || 'N/A'}</span>
             </div>
             <div class="ficha-item">
                 <span class="ficha-key">Dirección MAC</span>
-                <span class="ficha-val">${ci.mac_address || 'N/A'}</span>
+                <span class="ficha-val">${ci.direccion_mac || ci.mac_address || 'N/A'}</span>
             </div>
             <div class="ficha-item">
                 <span class="ficha-key">Fabricante y Modelo</span>
-                <span class="ficha-val">${ci.fabricante || 'Genérico'} ${ci.modelo || ''}</span>
+                <span class="ficha-val">${ci.marca || ci.fabricante || 'Genérico'} ${ci.modelo || ''}</span>
             </div>
             <div class="ficha-item">
                 <span class="ficha-key">Ubicación Física</span>
@@ -929,13 +940,16 @@ async function abrirFichaCI(ciId) {
         if (!impRes.ok) throw new Error("Error calculando impacto en grafo");
         const imp = await impRes.json();
 
-        const srvBadges = imp.servicios_afectados && imp.servicios_afectados.length > 0
-            ? imp.servicios_afectados.map(s => `<span class="impact-service-badge">⚡ ${escapeHtml(s.codigo)} — ${escapeHtml(s.nombre)}</span>`).join("")
+        const srvList = imp.servicios_negocio_afectados || imp.servicios_afectados || [];
+        const ciList = imp.cis_impactados || imp.cis_afectados || [];
+
+        const srvBadges = srvList.length > 0
+            ? srvList.map(s => `<span class="impact-service-badge">⚡ ${escapeHtml(s.codigo || s.servicio_codigo)} — ${escapeHtml(s.nombre || s.servicio_nombre)}</span>`).join("")
             : `<div class="text-muted" style="font-size:12.5px;">Ningún servicio N2 depende directamente de este componente.</div>`;
 
         impactBox.innerHTML = `
             <div style="font-size:13px; margin-bottom:8px;">
-                <strong>CIs dependientes en cascada:</strong> ${imp.cis_afectados.length} componentes tecnológicos.
+                <strong>CIs dependientes en cascada:</strong> ${ciList.length} componentes tecnológicos.
             </div>
             <div style="font-size:13px; font-weight:600; margin-bottom:4px;">Servicios TI de Negocio en Riesgo:</div>
             <div class="impact-badge-list">

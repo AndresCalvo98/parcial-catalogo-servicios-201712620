@@ -300,6 +300,7 @@ def create_puesto(puesto: schemas.PuestoCreate, db: Session = Depends(get_db), c
     return nuevo
 
 @app.get("/usuarios/", response_model=List[schemas.UsuarioResponse])
+@app.get("/api/usuarios", response_model=List[schemas.UsuarioResponse], include_in_schema=False)
 def get_usuarios(db: Session = Depends(get_db), current_user: models.Usuario = Depends(get_current_user)):
     users = db.query(models.Usuario).all()
     res = []
@@ -358,20 +359,59 @@ def create_usuario(user: schemas.UsuarioCreate, db: Session = Depends(get_db), c
 # =========================================================================
 
 @app.get("/catalogos/clases", response_model=List[schemas.CatalogoItemResponse])
-def get_clases(db: Session = Depends(get_db), current_user: models.Usuario = Depends(get_current_user)):
+@app.get("/api/catalogos/clases", response_model=List[schemas.CatalogoItemResponse], include_in_schema=False)
+def get_clases(db: Session = Depends(get_db)):
     return db.query(models.ClaseServicio).all()
 
 @app.get("/catalogos/criticidades", response_model=List[schemas.CatalogoItemResponse])
-def get_criticidades(db: Session = Depends(get_db), current_user: models.Usuario = Depends(get_current_user)):
+@app.get("/api/catalogos/criticidades", response_model=List[schemas.CatalogoItemResponse], include_in_schema=False)
+def get_criticidades(db: Session = Depends(get_db)):
     return db.query(models.Criticidad).all()
 
 @app.get("/catalogos/tipos", response_model=List[schemas.CatalogoItemResponse])
-def get_tipos(db: Session = Depends(get_db), current_user: models.Usuario = Depends(get_current_user)):
+@app.get("/api/catalogos/tipos", response_model=List[schemas.CatalogoItemResponse], include_in_schema=False)
+def get_tipos(db: Session = Depends(get_db)):
     return db.query(models.TipoServicio).all()
 
 @app.get("/servicios/nivel1", response_model=List[schemas.ServicioN1Response])
-def get_servicios_nivel1(db: Session = Depends(get_db), current_user: models.Usuario = Depends(get_current_user)):
+@app.get("/api/catalogos/nivel1", response_model=List[schemas.ServicioN1Response], include_in_schema=False)
+def get_servicios_nivel1(db: Session = Depends(get_db)):
     return db.query(models.ServicioNivel1).all()
+
+@app.get("/api/catalogos/secciones", include_in_schema=False)
+def get_catalogos_secciones(db: Session = Depends(get_db)):
+    secs = db.query(models.Seccion).filter(models.Seccion.activo == True).all()
+    return [{"id": s.id, "codigo": s.codigo, "nombre": s.nombre} for s in secs]
+
+@app.get("/api/catalogos/puestos", include_in_schema=False)
+def get_catalogos_puestos(db: Session = Depends(get_db)):
+    pts = db.query(models.Puesto).filter(models.Puesto.activo == True).all()
+    return [{"id": p.id, "codigo": p.codigo, "nombre": p.nombre, "seccion_id": p.seccion_id} for p in pts]
+
+@app.get("/api/organizacion", include_in_schema=False)
+def get_organizacion_tree(db: Session = Depends(get_db)):
+    empresas = db.query(models.Empresa).filter(models.Empresa.activo == True).all()
+    res = []
+    for emp in empresas:
+        areas_list = []
+        for a in emp.areas:
+            if not a.activo: continue
+            deptos_list = []
+            for d in a.departamentos:
+                if not d.activo: continue
+                secciones_list = []
+                for s in d.secciones:
+                    if not s.activo: continue
+                    puestos_list = []
+                    for p in s.puestos:
+                        if not p.activo: continue
+                        users_list = [{"id": u.id, "nombre": u.nombre, "correo": u.correo} for u in p.usuarios if u.activo]
+                        puestos_list.append({"id": p.id, "codigo": p.codigo, "nombre": p.nombre, "usuarios": users_list})
+                    secciones_list.append({"id": s.id, "codigo": s.codigo, "nombre": s.nombre, "puestos": puestos_list})
+                deptos_list.append({"id": d.id, "codigo": d.codigo, "nombre": d.nombre, "secciones": secciones_list})
+            areas_list.append({"id": a.id, "codigo": a.codigo, "nombre": a.nombre, "departamentos": deptos_list})
+        res.append({"id": emp.id, "codigo": emp.codigo, "nombre": emp.nombre, "areas": areas_list})
+    return res
 
 def format_servicio_response(s: models.ServicioNivel2) -> schemas.ServicioResponse:
     return schemas.ServicioResponse(
@@ -398,6 +438,8 @@ def format_servicio_response(s: models.ServicioNivel2) -> schemas.ServicioRespon
     )
 
 @app.get("/servicios/", response_model=List[schemas.ServicioResponse])
+@app.get("/servicios", response_model=List[schemas.ServicioResponse], include_in_schema=False)
+@app.get("/api/servicios", response_model=List[schemas.ServicioResponse], include_in_schema=False)
 def read_servicios(
     q: Optional[str] = Query(None, description="Búsqueda por código o nombre"),
     nivel1_id: Optional[int] = None,
@@ -431,6 +473,7 @@ def read_servicios(
     return [format_servicio_response(s) for s in servicios]
 
 @app.get("/servicios/{id}", response_model=schemas.ServicioResponse)
+@app.get("/api/servicios/{id}", response_model=schemas.ServicioResponse, include_in_schema=False)
 def get_servicio_ficha(id: int, current_user: models.Usuario = Depends(get_current_user), db: Session = Depends(get_db)):
     s = db.query(models.ServicioNivel2).filter(models.ServicioNivel2.id == id).first()
     if not s:
@@ -438,6 +481,7 @@ def get_servicio_ficha(id: int, current_user: models.Usuario = Depends(get_curre
     return format_servicio_response(s)
 
 @app.post("/servicios/", response_model=schemas.ServicioResponse)
+@app.post("/api/servicios", response_model=schemas.ServicioResponse, include_in_schema=False)
 def create_servicio(servicio: schemas.ServicioCreate, current_user: models.Usuario = Depends(admin_required), db: Session = Depends(get_db)):
     if db.query(models.ServicioNivel2).filter(models.ServicioNivel2.codigo == servicio.codigo).first():
         raise HTTPException(status_code=400, detail="Código de servicio duplicado (P05)")
@@ -459,6 +503,7 @@ def create_servicio(servicio: schemas.ServicioCreate, current_user: models.Usuar
     return format_servicio_response(nuevo)
 
 @app.put("/servicios/{id}", response_model=schemas.ServicioResponse)
+@app.put("/api/servicios/{id}", response_model=schemas.ServicioResponse, include_in_schema=False)
 def update_servicio(id: int, servicio: schemas.ServicioUpdate, current_user: models.Usuario = Depends(admin_required), db: Session = Depends(get_db)):
     s = db.query(models.ServicioNivel2).filter(models.ServicioNivel2.id == id).first()
     if not s:
@@ -481,6 +526,7 @@ def update_servicio(id: int, servicio: schemas.ServicioUpdate, current_user: mod
     return format_servicio_response(s)
 
 @app.delete("/servicios/{id}")
+@app.delete("/api/servicios/{id}", include_in_schema=False)
 def delete_servicio(id: int, current_user: models.Usuario = Depends(admin_required), db: Session = Depends(get_db)):
     s = db.query(models.ServicioNivel2).filter(models.ServicioNivel2.id == id).first()
     if not s:
@@ -579,6 +625,7 @@ def format_ci_response(ci: models.ConfigurationItem, db: Session) -> schemas.Con
     )
 
 @app.get("/api/cmdb/items", response_model=Dict[str, Any])
+@app.get("/api/cmdb/cis", response_model=Dict[str, Any])
 def search_cmdb_items(
     q: Optional[str] = Query(None, description="Búsqueda por código, nombre, IP o serie"),
     tipo_ci: Optional[str] = None,
@@ -625,6 +672,7 @@ def search_cmdb_items(
     }
 
 @app.get("/api/cmdb/items/{id}", response_model=schemas.ConfigurationItemResponse)
+@app.get("/api/cmdb/cis/{id}", response_model=schemas.ConfigurationItemResponse)
 def get_ci_detail(id: int, db: Session = Depends(get_db), current_user: models.Usuario = Depends(get_current_user)):
     ci = db.query(models.ConfigurationItem).filter(models.ConfigurationItem.id == id).first()
     if not ci:
@@ -749,6 +797,7 @@ def link_ci_to_service(link_in: schemas.CIServicioCreate, db: Session = Depends(
 
 # Graph Engineering: Análisis de Impacto (P14)
 @app.get("/api/cmdb/impact-analysis/{ci_id}")
+@app.get("/api/cmdb/cis/{ci_id}/impacto")
 def get_ci_impact_analysis(ci_id: int, db: Session = Depends(get_db), current_user: models.Usuario = Depends(get_current_user)):
     """Demuestra recorrido de dependencias en grafo y servicios potencialmente afectados (P14)"""
     return GraphService.analyze_impact(db, ci_id)
