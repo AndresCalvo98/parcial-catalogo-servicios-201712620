@@ -4,8 +4,15 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 
 # Obtiene la URL de la base de datos desde la variable de entorno de Docker
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://admin:admin123@localhost:5432/catalogo_db")
-if DATABASE_URL.startswith("postgresql://"):
-    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg2://", 1)
+
+# Si se configuró PostgreSQL pero psycopg2 no está instalado en el host local, fallback transparente a SQLite
+if DATABASE_URL.startswith("postgresql"):
+    try:
+        import psycopg2
+        if DATABASE_URL.startswith("postgresql://"):
+            DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg2://", 1)
+    except ImportError:
+        DATABASE_URL = "sqlite:///./test_dev.db"
 
 # Soporte para SQLite en entornos de pruebas locales sin Docker
 if DATABASE_URL.startswith("sqlite"):

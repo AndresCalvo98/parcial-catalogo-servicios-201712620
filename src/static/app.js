@@ -1,14 +1,22 @@
 /* ════════════════════════════════════════════════════════
-   CATÁLOGO TI — Frontend Application Logic
+   SERVICE DESK & CMDB — Frontend Application Logic
    Software Avanzado | USAC 2026 | Andrés Calvo 201712620
    ════════════════════════════════════════════════════════ */
 
 // ─── Global State ──────────────────────────────────────
 let token       = localStorage.getItem("token") || null;
 let currentUser = JSON.parse(localStorage.getItem("user") || "null");
-let catalogos   = { nivel1: [], clases: [], criticidades: [], tipos: [], secciones: [], puestos: [], usuarios: [] };
-let currentPage = 0;
-const PAGE_SIZE = 15;
+
+let catalogos   = { 
+    nivel1: [], clases: [], criticidades: [], tipos: [], 
+    secciones: [], puestos: [], usuarios: [], colas: [], categoriasCI: [] 
+};
+
+let currentServicioPage = 0;
+let currentTicketPage   = 0;
+let currentCMDBPage     = 0;
+let activeTicketId      = null;
+const PAGE_SIZE         = 15;
 
 // ─── Bootstrap ─────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
@@ -20,10 +28,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
 async function bootstrap() {
     await cargarCatalogosAuxiliares();
-    cargarKPIs();
+    cargarTickets();
+    cargarCMDB();
+    cargarFAQs();
+    cargarDashboardKPIs();
     cargarServicios();
     cargarOrganizacion();
     if (isAdmin()) cargarUsuarios();
+    if (currentUser) cargarMisSolicitudes();
 }
 
 // ─── Auth Helpers ───────────────────────────────────────
@@ -31,8 +43,6 @@ const isAdmin = () => currentUser && currentUser.rol === "administrador";
 
 function renderAuthUI() {
     const loggedIn = !!(token && currentUser);
-
-    // Sidebar user panel
     const infoEl   = document.getElementById("userInfoSidebar");
     const loginEl  = document.getElementById("loginPromptSidebar");
     const adminEls = document.querySelectorAll(".admin-only");
@@ -65,10 +75,14 @@ function renderAuthUI() {
 
 // ─── Tab Navigation ─────────────────────────────────────
 const TAB_LABELS = {
+    "tab-tickets":      "Service Desk & Colas",
+    "tab-portal":       "Autoservicio & FAQ",
+    "tab-cmdb":         "CMDB (5,000+ CIs)",
     "tab-catalogo":     "Catálogo de Servicios",
+    "tab-kpis":         "Dashboard SLAs & KPIs",
     "tab-organizacion": "Estructura Organizacional",
     "tab-usuarios":     "Gestión de Usuarios",
-    "tab-reporte":      "Reporte de Calidad"
+    "tab-reporte":      "Harness P01–P18"
 };
 
 function initTabs() {
@@ -105,8 +119,11 @@ function initEventListeners() {
     };
 
     // Quick logins
-    document.getElementById("btnQuickAdmin").onclick  = () => doLogin("admin@demo.com", "admin123");
-    document.getElementById("btnQuickNormal").onclick = () => doLogin("normal@demo.com", "clave");
+    document.getElementById("btnQuickAdmin").onclick       = () => doLogin("admin@demo.com", "admin123");
+    document.getElementById("btnQuickAgente1").onclick     = () => doLogin("agente1@demo.com", "clave123");
+    document.getElementById("btnQuickAprobador").onclick   = () => doLogin("aprobador@demo.com", "clave123");
+    document.getElementById("btnQuickSolicitante").onclick = () => doLogin("solicitante@demo.com", "clave123");
+    document.getElementById("btnQuickNormal").onclick      = () => doLogin("normal@demo.com", "clave");
 
     // Login form
     document.getElementById("loginForm").onsubmit = (e) => {
@@ -117,50 +134,84 @@ function initEventListeners() {
         );
     };
 
-    // Filters — Catálogo
-    document.getElementById("btnFilter").onclick       = () => { currentPage = 0; cargarServicios(); };
-    document.getElementById("btnResetFilter").onclick  = resetFilters;
-    document.getElementById("btnPrevPage").onclick     = () => { if (currentPage > 0) { currentPage--; cargarServicios(); } };
-    document.getElementById("btnNextPage").onclick     = () => { currentPage++; cargarServicios(); };
-    document.getElementById("searchInput").addEventListener("keydown", e => { if (e.key === "Enter") { currentPage = 0; cargarServicios(); } });
+    // Tickets Filters & Actions
+    document.getElementById("btnFilterTickets").onclick      = () => { currentTicketPage = 0; cargarTickets(); };
+    document.getElementById("btnResetFilterTickets").onclick = resetTicketFilters;
+    document.getElementById("btnPrevTicketPage").onclick    = () => { if (currentTicketPage > 0) { currentTicketPage--; cargarTickets(); } };
+    document.getElementById("btnNextTicketPage").onclick    = () => { currentTicketPage++; cargarTickets(); };
+    document.getElementById("ticketSearchInput").addEventListener("keydown", e => { if (e.key === "Enter") { currentTicketPage = 0; cargarTickets(); } });
 
-    // Servicio modal
+    document.getElementById("btnNuevoTicketModalOpen").onclick    = abrirModalNuevoTicket;
+    document.getElementById("btnCrearTicketDesdePortal").onclick  = abrirModalNuevoTicket;
+    document.getElementById("btnNuevoTicketClose").onclick        = () => closeModal("nuevoTicketModal");
+    document.getElementById("btnNuevoTicketCancel").onclick       = () => closeModal("nuevoTicketModal");
+    document.getElementById("nuevoTicketForm").onsubmit           = handleCrearNuevoTicket;
+
+    // Ticket Detail Modal
+    document.getElementById("btnTicketClose").onclick       = () => closeModal("ticketModal");
+    document.getElementById("btnTicketModalCerrar").onclick = () => closeModal("ticketModal");
+    document.getElementById("commentForm").onsubmit         = handleEnviarComentario;
+    document.getElementById("adjuntoForm").onsubmit         = handleSubirAdjunto;
+
+    // Ticket Tabs inside modal
+    document.getElementById("tabBtnComments").onclick  = () => switchTicketModalTab("comments");
+    document.getElementById("tabBtnAuditoria").onclick = () => switchTicketModalTab("auditoria");
+    document.getElementById("tabBtnAdjuntos").onclick  = () => switchTicketModalTab("adjuntos");
+
+    // FAQ Search
+    document.getElementById("faqSearchInput").addEventListener("input", e => filtrarFAQs(e.target.value.toLowerCase()));
+
+    // CMDB Filters & Actions
+    document.getElementById("btnFilterCMDB").onclick      = () => { currentCMDBPage = 0; cargarCMDB(); };
+    document.getElementById("btnResetFilterCMDB").onclick = resetCMDBFilters;
+    document.getElementById("btnPrevCMDBPage").onclick    = () => { if (currentCMDBPage > 0) { currentCMDBPage--; cargarCMDB(); } };
+    document.getElementById("btnNextCMDBPage").onclick    = () => { currentCMDBPage++; cargarCMDB(); };
+    document.getElementById("cmdbSearchInput").addEventListener("keydown", e => { if (e.key === "Enter") { currentCMDBPage = 0; cargarCMDB(); } });
+
+    document.getElementById("btnCIClose").onclick       = () => closeModal("ciModal");
+    document.getElementById("btnCICloseFooter").onclick = () => closeModal("ciModal");
+
+    // Catálogo Filters & Actions
+    document.getElementById("btnFilter").onclick       = () => { currentServicioPage = 0; cargarServicios(); };
+    document.getElementById("btnResetFilter").onclick  = resetFilters;
+    document.getElementById("btnPrevPage").onclick     = () => { if (currentServicioPage > 0) { currentServicioPage--; cargarServicios(); } };
+    document.getElementById("btnNextPage").onclick     = () => { currentServicioPage++; cargarServicios(); };
+    document.getElementById("searchInput").addEventListener("keydown", e => { if (e.key === "Enter") { currentServicioPage = 0; cargarServicios(); } });
+
+    // Servicio Modal
     document.getElementById("btnNuevoServicio").onclick    = () => abrirModalServicio();
     document.getElementById("btnServicioClose").onclick    = () => closeModal("servicioModal");
     document.getElementById("btnServicioCancel").onclick   = () => closeModal("servicioModal");
     document.getElementById("servicioForm").onsubmit       = handleGuardarServicio;
     document.getElementById("formSeccion").onchange        = (e) => filtrarUsuariosPorSeccion(parseInt(e.target.value) || null);
 
-    // Ficha modal
+    // Ficha Modal
     document.getElementById("btnFichaClose").onclick = () => closeModal("fichaModal");
-    document.getElementById("btnFichaX").onclick      = () => closeModal("fichaModal");
+    document.getElementById("btnFichaX").onclick     = () => closeModal("fichaModal");
 
-    // Usuarios modal
+    // Usuarios Modal
     document.getElementById("btnNuevoUsuario").onclick   = () => abrirModalUsuario();
     document.getElementById("btnUsuarioClose").onclick   = () => closeModal("usuarioModal");
     document.getElementById("btnUsuarioCancel").onclick  = () => closeModal("usuarioModal");
     document.getElementById("usuarioForm").onsubmit      = handleCrearUsuario;
 
-    // Org refresh
-    document.getElementById("btnRefreshOrg").onclick = () => cargarOrganizacion();
+    // Refresh buttons
+    document.getElementById("btnRefreshOrg").onclick  = () => cargarOrganizacion();
+    document.getElementById("btnRefreshKPIs").onclick = () => cargarDashboardKPIs();
 
     // Harness live execution
     const btnHarness = document.getElementById("btnRunHarness");
     if (btnHarness) btnHarness.onclick = ejecutarHarnessEnVivo;
 
     // Close modals on overlay click
-    ["loginModal", "fichaModal", "servicioModal", "usuarioModal"].forEach(id => {
-        document.getElementById(id).addEventListener("click", e => {
-            if (e.target.id === id) closeModal(id);
-        });
+    ["loginModal", "fichaModal", "servicioModal", "usuarioModal", "ticketModal", "nuevoTicketModal", "ciModal"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener("click", e => {
+                if (e.target.id === id) closeModal(id);
+            });
+        }
     });
-}
-
-function resetFilters() {
-    ["searchInput", "filterNivel1", "filterClase", "filterCriticidad", "filterTipo", "filterActivo"]
-        .forEach(id => document.getElementById(id).value = "");
-    currentPage = 0;
-    cargarServicios();
 }
 
 // ─── Modal Helpers ───────────────────────────────────────
@@ -173,433 +224,954 @@ async function apiFetch(url, options = {}) {
     if (token) options.headers["Authorization"] = `Bearer ${token}`;
     const res = await fetch(url, options);
     if (res.status === 401 && token) {
-        // Token was sent but server rejected it (expired or invalid)
         handleLogout(true);
-        throw new Error("Unauthorized");
+        throw new Error("Sesión expirada o no autorizada");
     }
     return res;
 }
 
-// ─── Auth Operations ─────────────────────────────────────
-async function doLogin(username, password) {
-    const btn = document.getElementById("btnLoginSubmit");
-    const errEl = document.getElementById("loginError");
-    errEl.classList.add("hidden");
-    btn.disabled = true;
-    btn.textContent = "Verificando…";
-
-    try {
-        const body = new URLSearchParams({ username, password });
-        const res  = await fetch("/token", {
-            method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body
-        });
-
-        if (!res.ok) {
-            const err = await res.json();
-            errEl.textContent = err.detail || "Credenciales incorrectas.";
-            errEl.classList.remove("hidden");
-            return;
-        }
-
-        const data    = await res.json();
-        token         = data.access_token;
-        currentUser   = { nombre: data.nombre, correo: data.correo, rol: data.rol };
-        localStorage.setItem("token", token);
-        localStorage.setItem("user", JSON.stringify(currentUser));
-
-        closeModal("loginModal");
-        renderAuthUI();
-        showToast(`Bienvenido, ${currentUser.nombre || currentUser.correo} 👋`, "success");
-        await cargarCatalogosAuxiliares();
-        cargarKPIs();
-        cargarServicios();
-        cargarOrganizacion();
-        if (isAdmin()) cargarUsuarios();
-    } catch (e) {
-        errEl.textContent = "Error de conexión con el servidor.";
-        errEl.classList.remove("hidden");
-    } finally {
-        btn.disabled = false;
-        btn.textContent = "Iniciar Sesión";
-    }
+// ─── Toast Notifications ─────────────────────────────────
+function showToast(msg, type = "info") {
+    const t = document.getElementById("toast");
+    t.textContent = msg;
+    t.className   = `toast toast-${type}`;
+    t.classList.remove("hidden");
+    setTimeout(() => t.classList.add("hidden"), 3800);
 }
 
-function handleLogout(silent = false) {
-    token       = null;
-    currentUser = null;
-    localStorage.removeItem("token");
-    localStorage.removeItem("user");
-    renderAuthUI();
+// ════════════════════════════════════════════════════════
+// MÓDULO: SERVICE DESK (TICKETS & COLAS)
+// ════════════════════════════════════════════════════════
 
-    // Reset table cleanly without network loop
-    const tbody = document.getElementById("serviciosTbody");
-    if (tbody) {
-        tbody.innerHTML = `<tr><td colspan="10" class="table-empty">
-            <svg width="40" height="40" fill="none" viewBox="0 0 24 24" stroke="#94a3b8" stroke-width="1.5"><path d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
-            <span>Inicia sesión para consultar el catálogo de servicios</span>
-        </td></tr>`;
-    }
+async function cargarTickets() {
+    const tbody = document.getElementById("ticketsTbody");
+    tbody.innerHTML = `<tr><td colspan="10" class="table-empty"><div class="spinner"></div><span>Cargando tickets…</span></td></tr>`;
 
-    const orgContainer = document.getElementById("orgTreeContainer");
-    if (orgContainer) {
-        orgContainer.innerHTML = `<div class="table-empty">
-            <svg width="48" height="48" fill="none" viewBox="0 0 24 24" stroke="#94a3b8" stroke-width="1.5"><path d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
-            <span>Inicia sesión para visualizar la jerarquía organizacional</span>
-        </div>`;
-    }
+    const proceso   = document.getElementById("ticketFilterProceso").value;
+    const cola_id   = document.getElementById("ticketFilterCola").value;
+    const prioridad = document.getElementById("ticketFilterPrioridad").value;
+    const estado    = document.getElementById("ticketFilterEstado").value;
+    const search    = document.getElementById("ticketSearchInput").value.trim();
 
-    // Reset KPIs
-    const kpiTotal = document.getElementById("kpiTotalServicios");
-    const kpiAct = document.getElementById("kpiActivos");
-    if (kpiTotal) kpiTotal.textContent = "—";
-    if (kpiAct) kpiAct.textContent = "—";
-
-    if (!silent) showToast("Sesión cerrada correctamente");
-}
-
-// ─── Catálogos Auxiliares ────────────────────────────────
-async function cargarCatalogosAuxiliares() {
-    const headers = token ? { Authorization: `Bearer ${token}` } : {};
-    const safeGet = async (url) => {
-        try { const r = await fetch(url, { headers }); return r.ok ? r.json() : []; }
-        catch (_) { return []; }
-    };
-
-    const [n1, cl, cr, tp, sec, pue, us] = await Promise.all([
-        safeGet("/servicios-nivel1/"),
-        safeGet("/clases/"),
-        safeGet("/criticidades/"),
-        safeGet("/tipos/"),
-        safeGet("/secciones/"),
-        safeGet("/puestos/"),
-        safeGet("/usuarios/")
-    ]);
-
-    catalogos = { nivel1: n1, clases: cl, criticidades: cr, tipos: tp, secciones: sec, puestos: pue, usuarios: us };
-
-    poblarSelectsFiltros();
-    poblarSelectsFormulario();
-    poblarSelectsPuestos();
-}
-
-function poblarSelect(id, items, valKey, labelKey, placeholder, showCode = false) {
-    const sel = document.getElementById(id);
-    if (!sel) return;
-    sel.innerHTML = placeholder ? `<option value="">${placeholder}</option>` : "";
-    items.forEach(it => {
-        const lbl = showCode && it.codigo ? `${it.codigo} — ${it[labelKey]}` : it[labelKey];
-        sel.innerHTML += `<option value="${it[valKey]}">${lbl}</option>`;
+    const params = new URLSearchParams({
+        skip: currentTicketPage * PAGE_SIZE,
+        limit: PAGE_SIZE
     });
-}
-
-function poblarSelectsFiltros() {
-    poblarSelect("filterNivel1",    catalogos.nivel1,       "id", "nombre", "Todos Nivel 1",      true);
-    poblarSelect("filterClase",     catalogos.clases,       "id", "nombre", "Todas las Clases");
-    poblarSelect("filterCriticidad",catalogos.criticidades, "id", "nombre", "Toda Criticidad");
-    poblarSelect("filterTipo",      catalogos.tipos,        "id", "nombre", "Todos los Tipos");
-}
-
-function poblarSelectsFormulario() {
-    poblarSelect("formNivel1",    catalogos.nivel1,       "id", "nombre", "— Selecciona Nivel 1 —", true);
-    poblarSelect("formClase",     catalogos.clases,       "id", "nombre", "— Sin clase —");
-    poblarSelect("formCriticidad",catalogos.criticidades, "id", "nombre", "— Sin criticidad —");
-    poblarSelect("formTipo",      catalogos.tipos,        "id", "nombre", "— Sin tipo —");
-    poblarSelect("formSeccion",   catalogos.secciones,    "id", "nombre", "— Sin sección —", true);
-    poblarSelect("formUsuario",   [],                     "id", "nombre", "— Sin responsable —");
-}
-
-function poblarSelectsPuestos() {
-    poblarSelect("formUsuarioPuesto", catalogos.puestos, "id", "nombre", "— Sin puesto —", true);
-}
-
-/**
- * P11: Filtrar el select de usuarios según la sección seleccionada.
- * Un usuario es válido si su puesto pertenece a la sección indicada.
- */
-function filtrarUsuariosPorSeccion(seccionId) {
-    const sel = document.getElementById("formUsuario");
-    sel.innerHTML = '<option value="">— Sin responsable —</option>';
-    if (!seccionId) return;
-
-    // Obtener puestos de la sección
-    const puestosSeccion = new Set(
-        catalogos.puestos.filter(p => p.seccion_id === seccionId).map(p => p.id)
-    );
-
-    // Filtrar usuarios cuyos puestos pertenezcan a esa sección
-    const usersSeccion = catalogos.usuarios.filter(u => u.puesto_id && puestosSeccion.has(u.puesto_id));
-
-    if (usersSeccion.length === 0) {
-        sel.innerHTML += '<option disabled>— No hay usuarios en esta sección —</option>';
-        return;
-    }
-
-    usersSeccion.forEach(u => {
-        sel.innerHTML += `<option value="${u.id}">${u.nombre} (${u.correo})</option>`;
-    });
-}
-
-// ─── KPIs ────────────────────────────────────────────────
-async function cargarKPIs() {
-    // Update KPI values from catalogos (already loaded)
-    document.getElementById("kpiNivel1").textContent    = catalogos.nivel1.length || "—";
-    document.getElementById("kpiUsuarios").textContent  = catalogos.usuarios.length || "—";
-    document.getElementById("statNivel1").textContent   = catalogos.nivel1.length || 12;
-
-    // Services KPIs — fetch total count and active count
-    if (!token) {
-        document.getElementById("kpiTotalServicios").textContent = "—";
-        document.getElementById("kpiActivos").textContent        = "—";
-        return;
-    }
+    if (proceso)   params.set("proceso", proceso);
+    if (cola_id)   params.set("cola_id", cola_id);
+    if (prioridad) params.set("prioridad", prioridad);
+    if (estado)    params.set("estado", estado);
+    if (search)    params.set("search", search);
 
     try {
-        const [allRes, activeRes] = await Promise.all([
-            apiFetch("/servicios/?limit=1000&skip=0"),
-            apiFetch("/servicios/?limit=1000&skip=0&activo=S")
-        ]);
+        const res = await apiFetch(`/api/tickets?${params.toString()}`);
+        if (!res.ok) throw new Error("Error consultando tickets");
+        const tickets = await res.json();
 
-        if (allRes.ok && activeRes.ok) {
-            const all    = await allRes.json();
-            const active = await activeRes.json();
-            document.getElementById("kpiTotalServicios").textContent = all.length;
-            document.getElementById("kpiActivos").textContent        = active.length;
-            document.getElementById("statNivel2").textContent        = all.length;
-        }
-    } catch (_) {}
+        renderTicketsTable(tickets);
+    } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="10" class="table-empty text-danger">Error: ${err.message}</td></tr>`;
+    }
 }
 
-// ─── Servicios Table ─────────────────────────────────────
-async function cargarServicios() {
-    const tbody = document.getElementById("serviciosTbody");
-    if (!token) {
-        tbody.innerHTML = `<tr><td colspan="10" class="table-empty">
-            <svg width="40" height="40" fill="none" viewBox="0 0 24 24" stroke="#94a3b8" stroke-width="1.5"><path d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
-            <span>Inicia sesión para consultar el catálogo de servicios</span>
-        </td></tr>`;
+function renderTicketsTable(tickets) {
+    const tbody = document.getElementById("ticketsTbody");
+    if (!tickets || tickets.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="10" class="table-empty">No se encontraron tickets con los filtros actuales.</td></tr>`;
+        document.getElementById("ticketPageInfo").textContent = "Sin resultados";
         return;
     }
-    tbody.innerHTML = '<tr><td colspan="10" class="table-empty"><div class="spinner"></div><span>Consultando catálogo…</span></td></tr>';
 
-    const params = new URLSearchParams();
-    const q  = document.getElementById("searchInput").value.trim();
-    const n1 = document.getElementById("filterNivel1").value;
-    const cl = document.getElementById("filterClase").value;
-    const cr = document.getElementById("filterCriticidad").value;
-    const tp = document.getElementById("filterTipo").value;
-    const ac = document.getElementById("filterActivo").value;
+    tbody.innerHTML = tickets.map(t => {
+        const pBadge = getPrioridadBadge(t.prioridad);
+        const eBadge = getEstadoBadge(t.estado);
+        const procesoBadge = `<span class="badge badge-purple">${escapeHtml(t.proceso)}</span>`;
+        const asignado = t.asignado ? escapeHtml(t.asignado.nombre) : `<em class="text-muted">Sin asignar</em>`;
+        const solicitante = t.solicitante ? escapeHtml(t.solicitante.nombre) : "Sistema";
+        const cola = t.cola ? escapeHtml(t.cola.nombre) : "General";
 
-    if (q)  params.append("q",            q);
-    if (n1) params.append("nivel1_id",    n1);
-    if (cl) params.append("clase_id",     cl);
-    if (cr) params.append("criticidad_id",cr);
-    if (tp) params.append("tipo_id",      tp);
-    if (ac) params.append("activo",       ac);
+        // Botón tomar ticket (disponible si no está asignado o es nuevo)
+        const canClaim = !t.asignado_id && t.estado !== "Cerrado" && t.estado !== "Cancelado";
+        const claimBtn = canClaim
+            ? `<button class="btn btn-sm btn-primary" onclick="handleTomarTicket(${t.id}, event)" title="Tomar este ticket de la cola">Tomar</button>`
+            : "";
 
-    params.append("skip",  currentPage * PAGE_SIZE);
-    params.append("limit", PAGE_SIZE);
-
-    try {
-        const res = await apiFetch(`/servicios/?${params}`);
-
-        if (!res.ok) {
-            tbody.innerHTML = `<tr><td colspan="10" class="table-empty">
-                <svg width="40" height="40" fill="none" viewBox="0 0 24 24" stroke="#94a3b8" stroke-width="1.5"><path d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
-                <span>Inicia sesión para consultar el catálogo de servicios</span>
-            </td></tr>`;
-            return;
-        }
-
-        const servicios = await res.json();
-
-        if (servicios.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="10" class="table-empty">
-                <svg width="40" height="40" fill="none" viewBox="0 0 24 24" stroke="#94a3b8" stroke-width="1.5"><path d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                <span>No se encontraron servicios con los filtros aplicados</span>
-            </td></tr>`;
-            return;
-        }
-
-        tbody.innerHTML = "";
-        servicios.forEach(s => {
-            const estadoBadge = s.activo === "S"
-                ? '<span class="badge badge-s">Activo</span>'
-                : (s.activo === "N" ? '<span class="badge badge-n">Inactivo</span>' : '<span class="badge">N/A</span>');
-            const rango = (s.minimo != null || s.maximo != null)
-                ? `${s.metrica || ''} ${s.minimo ?? '?'} – ${s.maximo ?? '?'}`
-                : '<span class="text-muted">—</span>';
-            const responsable = s.seccion_nombre
-                ? `${s.seccion_nombre}${s.usuario_nombre ? ` / ${s.usuario_nombre}` : ''}`
-                : '<span class="text-muted">—</span>';
-
-            const adminActions = isAdmin() ? `
-                <button class="btn-icon" onclick="editarServicio(${s.id})" title="Editar">✏️</button>
-                <button class="btn-icon btn-icon-danger" onclick="desactivarServicio(${s.id})" title="Dar de baja lógica">🗑️</button>
-            ` : "";
-
-            const tr = document.createElement("tr");
-            tr.innerHTML = `
-                <td><strong style="font-family:monospace;font-size:13px;">${s.codigo}</strong></td>
-                <td style="max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${s.nombre}">${s.nombre}</td>
-                <td>${s.nivel1_nombre || '<span class="text-muted">—</span>'}</td>
-                <td>${s.clase_nombre || '<span class="text-muted">—</span>'}</td>
-                <td>${s.criticidad_nombre || '<span class="text-muted">—</span>'}</td>
-                <td>${s.tipo_nombre || '<span class="text-muted">—</span>'}</td>
-                <td style="font-size:12px;">${rango}</td>
-                <td>${estadoBadge}</td>
-                <td style="font-size:12px;">${responsable}</td>
+        return `
+            <tr>
+                <td><code class="ticket-badge-code">${escapeHtml(t.codigo)}</code></td>
+                <td>${procesoBadge}</td>
+                <td><strong>${escapeHtml(t.titulo)}</strong></td>
+                <td>${pBadge}</td>
+                <td>${solicitante}</td>
+                <td>${asignado}</td>
+                <td><span class="badge badge-gray">${cola}</span></td>
+                <td>${eBadge}</td>
+                <td>${formatSLA(t.fecha_sla_resolucion, t.estado)}</td>
                 <td>
                     <div class="action-group-table">
-                        <button class="btn-icon btn-icon-view" onclick="verFicha(${s.id})" title="Ver ficha técnica">📋</button>
-                        ${adminActions}
+                        <button class="btn btn-sm btn-ghost" onclick="abrirDetalleTicket(${t.id})" title="Gestionar Ticket">Ver</button>
+                        ${claimBtn}
                     </div>
-                </td>`;
-            tbody.appendChild(tr);
-        });
+                </td>
+            </tr>
+        `;
+    }).join("");
 
-        const from = currentPage * PAGE_SIZE + 1;
-        const to   = from + servicios.length - 1;
-        document.getElementById("pageInfo").textContent       = `Mostrando ${from}–${to}`;
-        document.getElementById("pageNumberBadge").textContent = currentPage + 1;
-        document.getElementById("btnPrevPage").disabled        = currentPage === 0;
-        document.getElementById("btnNextPage").disabled        = servicios.length < PAGE_SIZE;
+    const start = currentTicketPage * PAGE_SIZE + 1;
+    const end   = start + tickets.length - 1;
+    document.getElementById("ticketPageInfo").textContent = `Mostrando ${start}–${end}`;
+    document.getElementById("ticketPageBadge").textContent = currentTicketPage + 1;
+}
 
-    } catch (e) {
-        tbody.innerHTML = `<tr><td colspan="10" class="table-empty">
-            <span>Error al cargar servicios. Inicia sesión primero.</span>
-        </td></tr>`;
+function getPrioridadBadge(p) {
+    if (!p) return `<span class="badge badge-gray">—</span>`;
+    if (p.includes("P1")) return `<span class="badge badge-red">${escapeHtml(p)}</span>`;
+    if (p.includes("P2")) return `<span class="badge badge-orange">${escapeHtml(p)}</span>`;
+    if (p.includes("P3")) return `<span class="badge badge-blue">${escapeHtml(p)}</span>`;
+    return `<span class="badge badge-gray">${escapeHtml(p)}</span>`;
+}
+
+function getEstadoBadge(e) {
+    if (!e) return `<span class="badge badge-gray">—</span>`;
+    if (e === "Resuelto" || e === "Cerrado") return `<span class="badge badge-s">${escapeHtml(e)}</span>`;
+    if (e === "En Progreso" || e === "En Ejecución") return `<span class="badge badge-blue">${escapeHtml(e)}</span>`;
+    if (e === "En Aprobación" || e === "En Evaluación") return `<span class="badge badge-orange">${escapeHtml(e)}</span>`;
+    if (e === "Cancelado" || e === "Rechazado") return `<span class="badge badge-n">${escapeHtml(e)}</span>`;
+    return `<span class="badge badge-gray">${escapeHtml(e)}</span>`;
+}
+
+function formatSLA(slaDate, estado) {
+    if (estado === "Resuelto" || estado === "Cerrado") {
+        return `<span class="text-success" style="font-size:12px; font-weight:600;">✓ Finalizado</span>`;
+    }
+    if (!slaDate) return `<span class="text-muted" style="font-size:12px;">N/A</span>`;
+    
+    const diff = new Date(slaDate) - new Date();
+    if (diff < 0) {
+        return `<span class="text-danger" style="font-size:12px; font-weight:700;">⚠ Vencido</span>`;
+    }
+    const hours = Math.round(diff / 3600000);
+    return `<span class="text-secondary" style="font-size:12px;">${hours}h restantes</span>`;
+}
+
+async function handleTomarTicket(ticketId, event) {
+    if (event) event.stopPropagation();
+    if (!token) {
+        showToast("Debes iniciar sesión para tomar un ticket", "error");
+        openModal("loginModal");
+        return;
+    }
+    try {
+        const res = await apiFetch(`/api/tickets/${ticketId}/tomar`, { method: "POST" });
+        if (res.status === 409) {
+            showToast("Conflicto de concurrencia: el ticket ya fue tomado por otro agente.", "error");
+            cargarTickets();
+            return;
+        }
+        if (!res.ok) {
+            const data = await res.json();
+            throw new Error(data.detail || "Error al tomar el ticket");
+        }
+        showToast("¡Ticket asignado exitosamente a tu usuario!", "success");
+        cargarTickets();
+    } catch (err) {
+        showToast(err.message, "error");
     }
 }
 
-// ─── Ficha Modal ─────────────────────────────────────────
-async function verFicha(id) {
-    openModal("fichaModal");
-    document.getElementById("fichaBody").innerHTML = '<div class="table-empty"><div class="spinner"></div></div>';
+async function abrirDetalleTicket(ticketId) {
+    activeTicketId = ticketId;
+    try {
+        const res = await apiFetch(`/api/tickets/${ticketId}`);
+        if (!res.ok) throw new Error("No se pudo cargar el detalle del ticket");
+        const t = await res.json();
+
+        // Render header
+        document.getElementById("ticketDetailCodigo").textContent    = t.codigo;
+        document.getElementById("ticketDetailProceso").textContent   = t.proceso;
+        document.getElementById("ticketDetailPrioridad").textContent = t.prioridad;
+        document.getElementById("ticketDetailEstado").textContent    = t.estado;
+        document.getElementById("ticketDetailTitulo").textContent    = t.titulo;
+        document.getElementById("ticketDetailDescripcion").textContent = t.descripcion || "Sin descripción proporcionada.";
+
+        // Render meta
+        document.getElementById("ticketDetailServicio").textContent   = t.servicio_n2 ? `${t.servicio_n2.codigo} - ${t.servicio_n2.nombre}` : "No vinculado";
+        document.getElementById("ticketDetailCola").textContent       = t.cola ? t.cola.nombre : "Sin cola asignada";
+        document.getElementById("ticketDetailAsignado").textContent   = t.asignado ? t.asignado.nombre : "Sin asignar";
+        document.getElementById("ticketDetailSolicitante").textContent = t.solicitante ? t.solicitante.nombre : "Sistema";
+        document.getElementById("ticketDetailSLA").textContent        = t.fecha_sla_resolucion ? new Date(t.fecha_sla_resolucion).toLocaleString() : "N/A";
+
+        // CIs vinculados
+        const ciList = t.cis && t.cis.length > 0 
+            ? t.cis.map(c => `<code class="mr-1">${c.ci.codigo} (${c.ci.nombre})</code>`).join(" ")
+            : "Ninguno";
+        document.getElementById("ticketDetailCI").innerHTML = ciList;
+
+        // Render transiciones permitidas según máquina de estados
+        renderTransicionesTicket(t);
+
+        // Render comentarios
+        renderTicketComments(t.comentarios || []);
+
+        // Render auditoría
+        renderTicketAuditoria(t.auditoria || []);
+
+        // Render adjuntos
+        renderTicketAdjuntos(t.adjuntos || []);
+
+        switchTicketModalTab("comments");
+        openModal("ticketModal");
+    } catch (err) {
+        showToast(err.message, "error");
+    }
+}
+
+function renderTransicionesTicket(t) {
+    const c = document.getElementById("ticketTransitionsContainer");
+    c.innerHTML = "";
+
+    const transicionesMap = {
+        "Nuevo": ["Asignado", "En Progreso", "Cancelado"],
+        "Asignado": ["En Progreso", "Pendiente Tercero", "Resuelto", "Cancelado"],
+        "En Progreso": ["En Aprobación", "Pendiente Tercero", "Resuelto", "Cancelado"],
+        "En Aprobación": ["Aprobado", "Rechazado"],
+        "Aprobado": ["En Ejecución", "Resuelto"],
+        "En Ejecución": ["Resuelto", "Cancelado"],
+        "Pendiente Tercero": ["En Progreso", "Resuelto"],
+        "Resuelto": ["Cerrado", "Reabierto"],
+        "Cerrado": ["Reabierto"],
+        "Reabierto": ["En Progreso", "Resuelto"]
+    };
+
+    const nextStates = transicionesMap[t.estado] || [];
+    if (nextStates.length === 0) {
+        c.innerHTML = `<span class="text-muted" style="font-size:12px;">No hay transiciones de estado permitidas desde '${escapeHtml(t.estado)}'.</span>`;
+        return;
+    }
+
+    nextStates.forEach(st => {
+        let btnClass = "btn btn-sm btn-ghost";
+        if (st === "Resuelto" || st === "Cerrado" || st === "Aprobado") btnClass = "btn btn-sm btn-success";
+        if (st === "Cancelado" || st === "Rechazado") btnClass = "btn btn-sm btn-danger";
+        if (st === "En Progreso" || st === "En Ejecución") btnClass = "btn btn-sm btn-primary";
+
+        const btn = document.createElement("button");
+        btn.className = btnClass;
+        btn.textContent = `➔ ${st}`;
+        btn.onclick = () => ejecutarTransicionTicket(t.id, st);
+        c.appendChild(btn);
+    });
+}
+
+async function ejecutarTransicionTicket(ticketId, nuevoEstado) {
+    if (!token) {
+        showToast("Debes iniciar sesión para cambiar estados", "error");
+        openModal("loginModal");
+        return;
+    }
+
+    let resolucion = null;
+    let motivo = `Transición a ${nuevoEstado} vía consola Service Desk`;
+
+    if (nuevoEstado === "Resuelto" || nuevoEstado === "Cerrado") {
+        resolucion = prompt("Ingresa el resumen de la solución aplicada:");
+        if (!resolucion || resolucion.trim() === "") {
+            showToast("Es obligatorio registrar la solución para cerrar o resolver el ticket", "error");
+            return;
+        }
+    } else if (nuevoEstado === "Reabierto") {
+        motivo = prompt("Ingresa el motivo de reapertura:") || "Reapertura por solicitud del usuario";
+    }
 
     try {
-        const res = await apiFetch(`/servicios/${id}`);
-        if (!res.ok) { closeModal("fichaModal"); return; }
+        const payload = {
+            nuevo_estado: nuevoEstado,
+            motivo: motivo,
+            resolucion: resolucion
+        };
+        const res = await apiFetch(`/api/tickets/${ticketId}/transicion`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+            const data = await res.json();
+            throw new Error(data.detail || "Error al procesar la transición");
+        }
+
+        showToast(`Estado actualizado a: ${nuevoEstado}`, "success");
+        abrirDetalleTicket(ticketId);
+        cargarTickets();
+        cargarDashboardKPIs();
+    } catch (err) {
+        showToast(err.message, "error");
+    }
+}
+
+function switchTicketModalTab(tab) {
+    document.getElementById("tabBtnComments").classList.toggle("active", tab === "comments");
+    document.getElementById("tabBtnAuditoria").classList.toggle("active", tab === "auditoria");
+    document.getElementById("tabBtnAdjuntos").classList.toggle("active", tab === "adjuntos");
+
+    document.getElementById("ticketTabCommentsPane").classList.toggle("hidden", tab !== "comments");
+    document.getElementById("ticketTabAuditoriaPane").classList.toggle("hidden", tab !== "auditoria");
+    document.getElementById("ticketTabAdjuntosPane").classList.toggle("hidden", tab !== "adjuntos");
+}
+
+function renderTicketComments(comments) {
+    const list = document.getElementById("ticketCommentsList");
+    if (!comments || comments.length === 0) {
+        list.innerHTML = `<div class="text-muted" style="padding:12px; font-size:13px;">Sin comentarios registrados.</div>`;
+        return;
+    }
+    list.innerHTML = comments.map(c => `
+        <div class="comment-card ${c.es_interno ? 'internal' : ''}">
+            <div class="comment-card-header">
+                <strong>${c.usuario ? escapeHtml(c.usuario.nombre) : 'Usuario'}</strong>
+                <span>${c.es_interno ? '🔒 NOTA INTERNA • ' : ''}${new Date(c.fecha).toLocaleString()}</span>
+            </div>
+            <div class="comment-card-body">${escapeHtml(c.texto)}</div>
+        </div>
+    `).join("");
+}
+
+function renderTicketAuditoria(audit) {
+    const list = document.getElementById("ticketAuditList");
+    if (!audit || audit.length === 0) {
+        list.innerHTML = `<div class="text-muted" style="padding:12px; font-size:13px;">Sin bitácora registrada.</div>`;
+        return;
+    }
+    list.innerHTML = audit.map(a => `
+        <div class="audit-item">
+            <strong>${escapeHtml(a.campo_modificado || 'Cambio')}:</strong>
+            <span>'${escapeHtml(a.valor_anterior || '—')}' ➔ '${escapeHtml(a.valor_nuevo || '—')}'</span>
+            <div class="text-muted" style="font-size:11px; margin-top:2px;">
+                ${a.usuario ? escapeHtml(a.usuario.nombre) : 'Sistema'} • ${new Date(a.fecha).toLocaleString()}
+                ${a.motivo ? `• <em>${escapeHtml(a.motivo)}</em>` : ''}
+            </div>
+        </div>
+    `).join("");
+}
+
+function renderTicketAdjuntos(adjuntos) {
+    const list = document.getElementById("ticketAdjuntosList");
+    if (!adjuntos || adjuntos.length === 0) {
+        list.innerHTML = `<div class="text-muted" style="padding:12px; font-size:13px;">Sin archivos adjuntos.</div>`;
+        return;
+    }
+    list.innerHTML = adjuntos.map(a => `
+        <div class="adjunto-item" style="padding:6px 12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:4px; font-size:12.5px; display:flex; justify-content:space-between;">
+            <span>📎 <strong>${escapeHtml(a.nombre_archivo)}</strong></span>
+            <a href="${escapeHtml(a.url_almacenamiento)}" target="_blank" class="text-primary" style="font-size:12px;">Ver archivo</a>
+        </div>
+    `).join("");
+}
+
+async function handleEnviarComentario(e) {
+    e.preventDefault();
+    if (!activeTicketId) return;
+    if (!token) {
+        showToast("Debes iniciar sesión para comentar", "error");
+        openModal("loginModal");
+        return;
+    }
+
+    const texto = document.getElementById("commentTextInput").value.trim();
+    const es_interno = document.getElementById("commentIsInternal").checked;
+    if (!texto) return;
+
+    try {
+        const res = await apiFetch(`/api/tickets/${activeTicketId}/comentarios`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ texto, es_interno })
+        });
+        if (!res.ok) throw new Error("Error enviando comentario");
+
+        document.getElementById("commentTextInput").value = "";
+        document.getElementById("commentIsInternal").checked = false;
+        abrirDetalleTicket(activeTicketId);
+        showToast("Comentario agregado", "success");
+    } catch (err) {
+        showToast(err.message, "error");
+    }
+}
+
+async function handleSubirAdjunto(e) {
+    e.preventDefault();
+    if (!activeTicketId) return;
+    if (!token) {
+        showToast("Debes iniciar sesión para adjuntar archivos", "error");
+        return;
+    }
+
+    const nombre_archivo = document.getElementById("adjuntoNombreInput").value.trim();
+    const url = document.getElementById("adjuntoUrlInput").value.trim();
+    if (!nombre_archivo || !url) return;
+
+    try {
+        const res = await apiFetch(`/api/tickets/${activeTicketId}/adjuntos`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ nombre_archivo, url_almacenamiento: url })
+        });
+        if (!res.ok) throw new Error("Error registrando archivo");
+
+        document.getElementById("adjuntoNombreInput").value = "";
+        document.getElementById("adjuntoUrlInput").value = "";
+        abrirDetalleTicket(activeTicketId);
+        showToast("Archivo adjuntado", "success");
+    } catch (err) {
+        showToast(err.message, "error");
+    }
+}
+
+function abrirModalNuevoTicket() {
+    if (!token) {
+        showToast("Inicia sesión para levantar un ticket", "info");
+        openModal("loginModal");
+        return;
+    }
+
+    // Llenar select de servicios
+    const sSelect = document.getElementById("newTicketServicio");
+    sSelect.innerHTML = `<option value="">Selecciona un Servicio Nivel 2…</option>` +
+        (catalogos.serviciosN2 || []).map(s => `<option value="${s.id}">${escapeHtml(s.codigo)} - ${escapeHtml(s.nombre)}</option>`).join("");
+
+    // Llenar select de colas
+    const cSelect = document.getElementById("newTicketCola");
+    cSelect.innerHTML = `<option value="">Auto-enrutar según proceso…</option>` +
+        (catalogos.colas || []).map(c => `<option value="${c.id}">${escapeHtml(c.nombre)}</option>`).join("");
+
+    document.getElementById("nuevoTicketForm").reset();
+    document.getElementById("newTicketError").classList.add("hidden");
+    openModal("nuevoTicketModal");
+}
+
+async function handleCrearNuevoTicket(e) {
+    e.preventDefault();
+    const errBox = document.getElementById("newTicketError");
+    errBox.classList.add("hidden");
+
+    const proceso   = document.getElementById("newTicketProceso").value;
+    const prioridad = document.getElementById("newTicketPrioridad").value;
+    const titulo    = document.getElementById("newTicketTitulo").value.trim();
+    const desc      = document.getElementById("newTicketDescripcion").value.trim();
+    const srvId     = parseInt(document.getElementById("newTicketServicio").value) || null;
+    const colaId    = parseInt(document.getElementById("newTicketCola").value) || null;
+
+    if (!titulo || !desc) {
+        errBox.textContent = "Por favor completa el título y los detalles del requerimiento.";
+        errBox.classList.remove("hidden");
+        return;
+    }
+
+    try {
+        const payload = {
+            titulo: titulo,
+            descripcion: desc,
+            proceso: proceso,
+            prioridad: prioridad,
+            servicio_n2_id: srvId,
+            cola_id: colaId
+        };
+        const res = await apiFetch("/api/tickets", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+            const data = await res.json();
+            throw new Error(data.detail || "Error al crear ticket");
+        }
+
+        const nuevo = await res.json();
+        closeModal("nuevoTicketModal");
+        showToast(`¡Ticket ${nuevo.codigo} creado exitosamente!`, "success");
+        cargarTickets();
+        cargarDashboardKPIs();
+        if (currentUser) cargarMisSolicitudes();
+    } catch (err) {
+        errBox.textContent = err.message;
+        errBox.classList.remove("hidden");
+    }
+}
+
+function resetTicketFilters() {
+    ["ticketFilterProceso", "ticketFilterCola", "ticketFilterPrioridad", "ticketFilterEstado", "ticketSearchInput"]
+        .forEach(id => document.getElementById(id).value = "");
+    currentTicketPage = 0;
+    cargarTickets();
+}
+
+// ════════════════════════════════════════════════════════
+// MÓDULO: AUTOSERVICIO & FAQ (NIVEL 0)
+// ════════════════════════════════════════════════════════
+
+let faqsCached = [];
+
+async function cargarFAQs() {
+    const container = document.getElementById("faqListContainer");
+    try {
+        const res = await fetch("/api/faq");
+        if (!res.ok) throw new Error("Error cargando base de conocimiento");
+        faqsCached = await res.json();
+        renderFAQs(faqsCached);
+    } catch (err) {
+        container.innerHTML = `<div class="text-danger" style="padding:12px;">Error: ${err.message}</div>`;
+    }
+}
+
+function renderFAQs(faqs) {
+    const container = document.getElementById("faqListContainer");
+    if (!faqs || faqs.length === 0) {
+        container.innerHTML = `<div class="table-empty">No se encontraron artículos con ese término.</div>`;
+        return;
+    }
+
+    container.innerHTML = faqs.map(f => `
+        <div class="faq-item">
+            <div class="faq-question" onclick="this.nextElementSibling.classList.toggle('hidden')">
+                <span>📖 ${escapeHtml(f.pregunta)}</span>
+                <span style="font-size:12px; color:var(--text-muted);">▾</span>
+            </div>
+            <div class="faq-answer hidden">
+                <p>${escapeHtml(f.respuesta)}</p>
+                <div style="margin-top:8px; font-size:11.5px; color:var(--text-muted);">
+                    Categoría: <strong>${escapeHtml(f.categoria)}</strong>
+                </div>
+            </div>
+        </div>
+    `).join("");
+}
+
+function filtrarFAQs(query) {
+    if (!query) {
+        renderFAQs(faqsCached);
+        return;
+    }
+    const filtered = faqsCached.filter(f => 
+        f.pregunta.toLowerCase().includes(query) || 
+        f.respuesta.toLowerCase().includes(query) ||
+        (f.palabras_clave && f.palabras_clave.toLowerCase().includes(query))
+    );
+    renderFAQs(filtered);
+}
+
+async function cargarMisSolicitudes() {
+    const tbody = document.getElementById("misSolicitudesTbody");
+    const badge = document.getElementById("badgeMisSolicitudes");
+    if (!currentUser) {
+        tbody.innerHTML = `<tr><td colspan="5" class="table-empty">Inicia sesión para ver tus solicitudes</td></tr>`;
+        badge.textContent = "0 activas";
+        return;
+    }
+
+    try {
+        const res = await apiFetch(`/api/tickets?solicitante_id=${currentUser.id}&limit=10`);
+        if (!res.ok) throw new Error("Error cargando solicitudes");
+        const tickets = await res.json();
+
+        badge.textContent = `${tickets.length} registradas`;
+
+        if (tickets.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="5" class="table-empty">No tienes solicitudes registradas aún.</td></tr>`;
+            return;
+        }
+
+        tbody.innerHTML = tickets.map(t => `
+            <tr>
+                <td><code class="ticket-badge-code">${escapeHtml(t.codigo)}</code></td>
+                <td><strong>${escapeHtml(t.titulo)}</strong></td>
+                <td>${getEstadoBadge(t.estado)}</td>
+                <td>${new Date(t.fecha_creacion).toLocaleDateString()}</td>
+                <td>
+                    <button class="btn btn-sm btn-ghost" onclick="abrirDetalleTicket(${t.id})">Ver Estado</button>
+                </td>
+            </tr>
+        `).join("");
+    } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="5" class="table-empty text-danger">Error: ${err.message}</td></tr>`;
+    }
+}
+
+// ════════════════════════════════════════════════════════
+// MÓDULO: CMDB (5,000+ CIs & GRAPH ENGINEERING)
+// ════════════════════════════════════════════════════════
+
+async function cargarCMDB() {
+    const tbody = document.getElementById("cmdbTbody");
+    tbody.innerHTML = `<tr><td colspan="9" class="table-empty"><div class="spinner"></div><span>Cargando inventario CMDB…</span></td></tr>`;
+
+    const search    = document.getElementById("cmdbSearchInput").value.trim();
+    const categoria = document.getElementById("cmdbFilterCategoria").value;
+    const estado    = document.getElementById("cmdbFilterEstado").value;
+
+    const params = new URLSearchParams({
+        skip: currentCMDBPage * PAGE_SIZE,
+        limit: PAGE_SIZE
+    });
+    if (search)    params.set("search", search);
+    if (categoria) params.set("categoria_id", categoria);
+    if (estado)    params.set("estado", estado);
+
+    try {
+        const res = await apiFetch(`/api/cmdb/cis?${params.toString()}`);
+        if (!res.ok) throw new Error("Error consultando CMDB");
+        const cis = await res.json();
+
+        renderCMDBTable(cis);
+    } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="9" class="table-empty text-danger">Error: ${err.message}</td></tr>`;
+    }
+}
+
+function renderCMDBTable(cis) {
+    const tbody = document.getElementById("cmdbTbody");
+    if (!cis || cis.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="9" class="table-empty">No se encontraron CIs con los filtros indicados.</td></tr>`;
+        document.getElementById("cmdbPageInfo").textContent = "Sin resultados";
+        return;
+    }
+
+    tbody.innerHTML = cis.map(c => {
+        const cat = c.categoria ? escapeHtml(c.categoria.nombre) : "Sin categoría";
+        const ip = c.ip_address ? `<code>${escapeHtml(c.ip_address)}</code>` : `<span class="text-muted">N/A</span>`;
+        const serie = c.numero_serie ? escapeHtml(c.numero_serie) : `<span class="text-muted">N/A</span>`;
+        const srvCount = c.servicios ? c.servicios.length : 0;
+        const srvBadge = srvCount > 0 
+            ? `<span class="badge badge-blue">${srvCount} servicio(s)</span>`
+            : `<span class="text-muted" style="font-size:12px;">Directo</span>`;
+
+        return `
+            <tr>
+                <td><code class="ticket-badge-code">${escapeHtml(c.codigo)}</code></td>
+                <td><strong>${escapeHtml(c.nombre)}</strong></td>
+                <td><span class="badge badge-purple">${cat}</span></td>
+                <td>${escapeHtml(c.tipo_ci || 'Dispositivo')}</td>
+                <td><span class="badge ${c.estado === 'Operativo' ? 'badge-s' : 'badge-orange'}">${escapeHtml(c.estado)}</span></td>
+                <td>${ip}</td>
+                <td>${serie}</td>
+                <td>${srvBadge}</td>
+                <td>
+                    <button class="btn btn-sm btn-ghost" onclick="abrirFichaCI(${c.id})" title="Ver Ficha y Análisis de Impacto">Impacto</button>
+                </td>
+            </tr>
+        `;
+    }).join("");
+
+    const start = currentCMDBPage * PAGE_SIZE + 1;
+    const end   = start + cis.length - 1;
+    document.getElementById("cmdbPageInfo").textContent = `Mostrando ${start}–${end}`;
+    document.getElementById("cmdbPageBadge").textContent = currentCMDBPage + 1;
+}
+
+async function abrirFichaCI(ciId) {
+    const modalBody = document.getElementById("ciModalBody");
+    const impactBox = document.getElementById("ciImpactContainer");
+    modalBody.innerHTML = `<div class="spinner"></div>`;
+    impactBox.innerHTML = `<div class="spinner"></div> Calculando servicios TI afectados…`;
+    openModal("ciModal");
+
+    try {
+        const res = await apiFetch(`/api/cmdb/cis/${ciId}`);
+        if (!res.ok) throw new Error("No se pudo cargar el CI");
+        const ci = await res.json();
+
+        document.getElementById("ciModalTitle").textContent = `${ci.codigo} — ${ci.nombre}`;
+        document.getElementById("ciModalSubtitle").textContent = `Categoría: ${ci.categoria ? ci.categoria.nombre : 'General'} • Tipo: ${ci.tipo_ci}`;
+
+        modalBody.innerHTML = `
+            <div class="ficha-item">
+                <span class="ficha-key">Número de Serie</span>
+                <span class="ficha-val">${ci.numero_serie || 'N/A'}</span>
+            </div>
+            <div class="ficha-item">
+                <span class="ficha-key">Estado Operativo</span>
+                <span class="ficha-val">${ci.estado}</span>
+            </div>
+            <div class="ficha-item">
+                <span class="ficha-key">Dirección IP</span>
+                <span class="ficha-val">${ci.ip_address || 'N/A'}</span>
+            </div>
+            <div class="ficha-item">
+                <span class="ficha-key">Dirección MAC</span>
+                <span class="ficha-val">${ci.mac_address || 'N/A'}</span>
+            </div>
+            <div class="ficha-item">
+                <span class="ficha-key">Fabricante y Modelo</span>
+                <span class="ficha-val">${ci.fabricante || 'Genérico'} ${ci.modelo || ''}</span>
+            </div>
+            <div class="ficha-item">
+                <span class="ficha-key">Ubicación Física</span>
+                <span class="ficha-val">${ci.ubicacion_fisica || 'Datacenter Central'}</span>
+            </div>
+        `;
+
+        // Llamar endpoint de Graph Engineering: Análisis de Impacto
+        const impRes = await apiFetch(`/api/cmdb/cis/${ciId}/impacto`);
+        if (!impRes.ok) throw new Error("Error calculando impacto en grafo");
+        const imp = await impRes.json();
+
+        const srvBadges = imp.servicios_afectados && imp.servicios_afectados.length > 0
+            ? imp.servicios_afectados.map(s => `<span class="impact-service-badge">⚡ ${escapeHtml(s.codigo)} — ${escapeHtml(s.nombre)}</span>`).join("")
+            : `<div class="text-muted" style="font-size:12.5px;">Ningún servicio N2 depende directamente de este componente.</div>`;
+
+        impactBox.innerHTML = `
+            <div style="font-size:13px; margin-bottom:8px;">
+                <strong>CIs dependientes en cascada:</strong> ${imp.cis_afectados.length} componentes tecnológicos.
+            </div>
+            <div style="font-size:13px; font-weight:600; margin-bottom:4px;">Servicios TI de Negocio en Riesgo:</div>
+            <div class="impact-badge-list">
+                ${srvBadges}
+            </div>
+        `;
+    } catch (err) {
+        impactBox.innerHTML = `<div class="text-danger">Error: ${err.message}</div>`;
+    }
+}
+
+function resetCMDBFilters() {
+    ["cmdbSearchInput", "cmdbFilterCategoria", "cmdbFilterEstado"].forEach(id => document.getElementById(id).value = "");
+    currentCMDBPage = 0;
+    cargarCMDB();
+}
+
+// ════════════════════════════════════════════════════════
+// MÓDULO: DASHBOARD SLAS & KPIS
+// ════════════════════════════════════════════════════════
+
+async function cargarDashboardKPIs() {
+    try {
+        const res = await apiFetch("/api/dashboard/kpis");
+        if (!res.ok) return;
+        const kpis = await res.json();
+
+        // Cards principales
+        document.getElementById("kpiTotalTickets").textContent       = kpis.total_tickets;
+        document.getElementById("kpiIncidentesActivos").textContent   = kpis.incidentes_activos || 0;
+        document.getElementById("kpiCambiosPendientes").textContent   = kpis.cambios_en_gestion || 0;
+        document.getElementById("kpiCumplimientoSLA").textContent     = `${kpis.sla_cumplimiento_pct}%`;
+
+        document.getElementById("kpiMTTA").textContent       = `${kpis.mtta_promedio_min} min`;
+        document.getElementById("kpiMTTR").textContent       = `${kpis.mttr_promedio_min} min`;
+        document.getElementById("kpiSLAPercent").textContent = `${kpis.sla_cumplimiento_pct}%`;
+        document.getElementById("kpiViolaciones").textContent = kpis.sla_violados || 0;
+
+        // Desglose por proceso
+        const procBox = document.getElementById("kpiProcesosBreakdown");
+        if (procBox && kpis.por_proceso) {
+            procBox.innerHTML = Object.entries(kpis.por_proceso).map(([proc, count]) => `
+                <div style="display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid #f1f5f9; font-size:13px;">
+                    <span>📌 ${escapeHtml(proc)}</span>
+                    <strong>${count} tickets</strong>
+                </div>
+            `).join("");
+        }
+
+        // Tabla colas
+        const colasTbody = document.getElementById("kpiColasTbody");
+        if (colasTbody && kpis.por_cola) {
+            colasTbody.innerHTML = kpis.por_cola.map(c => `
+                <tr>
+                    <td><strong>${escapeHtml(c.nombre)}</strong></td>
+                    <td>${c.tickets_abiertos}</td>
+                    <td>${c.tiempo_atencion_promedio || '15 min'}</td>
+                    <td><span class="badge badge-s">${c.sla_pct || 96}%</span></td>
+                </tr>
+            `).join("");
+        }
+    } catch (err) {
+        console.warn("No se pudieron cargar KPIs:", err);
+    }
+}
+
+// ════════════════════════════════════════════════════════
+// MÓDULO: CATÁLOGO DE SERVICIOS TI (PARCIAL 2 RETENIDO)
+// ════════════════════════════════════════════════════════
+
+async function cargarServicios() {
+    const tbody = document.getElementById("serviciosTbody");
+    tbody.innerHTML = `<tr><td colspan="10" class="table-empty"><div class="spinner"></div><span>Cargando catálogo…</span></td></tr>`;
+
+    const search     = document.getElementById("searchInput").value.trim();
+    const nivel1_id  = document.getElementById("filterNivel1").value;
+    const clase_id   = document.getElementById("filterClase").value;
+    const crit_id    = document.getElementById("filterCriticidad").value;
+    const tipo_id    = document.getElementById("filterTipo").value;
+    const activo     = document.getElementById("filterActivo").value;
+
+    const params = new URLSearchParams({
+        skip: currentServicioPage * PAGE_SIZE,
+        limit: PAGE_SIZE
+    });
+    if (search)    params.set("search", search);
+    if (nivel1_id) params.set("nivel1_id", nivel1_id);
+    if (clase_id)  params.set("clase_id", clase_id);
+    if (crit_id)   params.set("criticidad_id", crit_id);
+    if (tipo_id)   params.set("tipo_id", tipo_id);
+    if (activo)    params.set("activo", activo);
+
+    try {
+        const res = await apiFetch(`/api/servicios?${params.toString()}`);
+        if (!res.ok) throw new Error("Error al obtener los servicios");
+        const servicios = await res.json();
+
+        renderServiciosTable(servicios);
+    } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="10" class="table-empty text-danger">Error: ${err.message}</td></tr>`;
+    }
+}
+
+function renderServiciosTable(servicios) {
+    const tbody = document.getElementById("serviciosTbody");
+    if (!servicios || servicios.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="10" class="table-empty">No se encontraron servicios con los filtros aplicados.</td></tr>`;
+        document.getElementById("pageInfo").textContent = "Sin resultados";
+        return;
+    }
+
+    tbody.innerHTML = servicios.map(s => {
+        const activoBadge = s.activo === "S" ? `<span class="badge badge-s">Activo</span>` : `<span class="badge badge-n">Inactivo</span>`;
+        const n1 = s.nivel1 ? `${escapeHtml(s.nivel1.codigo)} - ${escapeHtml(s.nivel1.nombre)}` : "—";
+        const clase = s.clase ? escapeHtml(s.clase.nombre) : "—";
+        const crit = s.criticidad ? `<span class="badge badge-${s.criticidad.nombre.toLowerCase().replace(' ', '')}">${escapeHtml(s.criticidad.nombre)}</span>` : "—";
+        const tipo = s.tipo ? escapeHtml(s.tipo.nombre) : "—";
+        const rango = (s.minimo !== null || s.maximo !== null) ? `${s.minimo ?? '—'} a ${s.maximo ?? '—'} ${s.metrica ? `(${escapeHtml(s.metrica)})` : ''}` : (s.metrica || "—");
+        const resp = s.usuario_responsable ? escapeHtml(s.usuario_responsable.nombre) : (s.seccion_responsable ? `<small class="text-muted">${escapeHtml(s.seccion_responsable.nombre)}</small>` : "—");
+
+        const editBtn = isAdmin() ? `
+            <button class="btn-icon" title="Editar Servicio" onclick="abrirModalServicio(${s.id})">
+                <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
+            </button>
+            <button class="btn-icon btn-icon-danger" title="Dar de Baja" onclick="confirmarBajaServicio(${s.id}, '${escapeHtml(s.codigo)}')">
+                <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+            </button>
+        ` : "";
+
+        return `
+            <tr>
+                <td><code>${escapeHtml(s.codigo)}</code></td>
+                <td><strong>${escapeHtml(s.nombre)}</strong></td>
+                <td><small>${n1}</small></td>
+                <td>${clase}</td>
+                <td>${crit}</td>
+                <td>${tipo}</td>
+                <td><small>${rango}</small></td>
+                <td>${activoBadge}</td>
+                <td>${resp}</td>
+                <td>
+                    <div class="action-group-table">
+                        <button class="btn-icon btn-icon-view" title="Ver Ficha Técnica" onclick="verFichaServicio(${s.id})">
+                            <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                        </button>
+                        ${editBtn}
+                    </div>
+                </td>
+            </tr>
+        `;
+    }).join("");
+
+    const start = currentServicioPage * PAGE_SIZE + 1;
+    const end   = start + servicios.length - 1;
+    document.getElementById("pageInfo").textContent = `Mostrando ${start}–${end}`;
+    document.getElementById("pageNumberBadge").textContent = currentServicioPage + 1;
+}
+
+async function verFichaServicio(id) {
+    try {
+        const res = await apiFetch(`/api/servicios/${id}`);
+        if (!res.ok) throw new Error("No se pudo obtener la ficha");
         const s = await res.json();
 
         document.getElementById("fichaTitle").textContent = `${s.codigo} — ${s.nombre}`;
-
-        const item = (label, val, full = false) => `
-            <div class="ficha-item${full ? ' span-full' : ''}">
-                <span class="ficha-label">${label}</span>
-                <div class="ficha-val">${val ?? '<span class="text-muted">N/A</span>'}</div>
-            </div>`;
-
-        const estadoHtml = s.activo === "S"
-            ? '<span class="badge badge-s">Activo</span>'
-            : (s.activo === "N" ? '<span class="badge badge-n">Inactivo</span>' : '<span class="badge">Desconocido</span>');
-
         document.getElementById("fichaBody").innerHTML = `
-            ${item("Código (N2)",           `<code>${s.codigo}</code>`)}
-            ${item("Estado",                estadoHtml)}
-            ${item("Servicio Nivel 1",      s.nivel1_nombre)}
-            ${item("Clase de Servicio",     s.clase_nombre)}
-            ${item("Criticidad",            s.criticidad_nombre)}
-            ${item("Tipo de Servicio",      s.tipo_nombre)}
-            ${item("Métrica",               s.metrica)}
-            ${item("Umbral Mínimo",         s.minimo ?? null)}
-            ${item("Umbral Máximo",         s.maximo ?? null)}
-            ${item("Sección Responsable",   s.seccion_nombre)}
-            ${item("Usuario Responsable",   s.usuario_nombre)}
-            ${item("Nombre del Servicio",   s.nombre, true)}
-            ${item("Descripción",           s.descripcion || "<em>Sin descripción</em>", true)}
+            <div class="ficha-item"><span class="ficha-key">Código Nivel 2</span><span class="ficha-val"><code>${escapeHtml(s.codigo)}</code></span></div>
+            <div class="ficha-item"><span class="ficha-key">Servicio Padre (N1)</span><span class="ficha-val">${s.nivel1 ? `${escapeHtml(s.nivel1.codigo)} - ${escapeHtml(s.nivel1.nombre)}` : '—'}</span></div>
+            <div class="ficha-item"><span class="ficha-key">Clase</span><span class="ficha-val">${s.clase ? escapeHtml(s.clase.nombre) : '—'}</span></div>
+            <div class="ficha-item"><span class="ficha-key">Criticidad</span><span class="ficha-val">${s.criticidad ? escapeHtml(s.criticidad.nombre) : '—'}</span></div>
+            <div class="ficha-item"><span class="ficha-key">Tipo de Servicio</span><span class="ficha-val">${s.tipo ? escapeHtml(s.tipo.nombre) : '—'}</span></div>
+            <div class="ficha-item"><span class="ficha-key">Métrica</span><span class="ficha-val">${s.metrica || '—'}</span></div>
+            <div class="ficha-item"><span class="ficha-key">Umbral Mínimo</span><span class="ficha-val">${s.minimo ?? '—'}</span></div>
+            <div class="ficha-item"><span class="ficha-key">Umbral Máximo</span><span class="ficha-val">${s.maximo ?? '—'}</span></div>
+            <div class="ficha-item"><span class="ficha-key">Sección Responsable</span><span class="ficha-val">${s.seccion_responsable ? escapeHtml(s.seccion_responsable.nombre) : '—'}</span></div>
+            <div class="ficha-item"><span class="ficha-key">Usuario Responsable</span><span class="ficha-val">${s.usuario_responsable ? escapeHtml(s.usuario_responsable.nombre) : '—'}</span></div>
+            <div class="ficha-item" style="grid-column: 1 / -1;"><span class="ficha-key">Descripción</span><span class="ficha-val">${s.descripcion || 'Sin descripción.'}</span></div>
         `;
-    } catch (_) {
-        closeModal("fichaModal");
-        showToast("Error al obtener ficha técnica", "error");
+        openModal("fichaModal");
+    } catch (err) {
+        showToast(err.message, "error");
     }
 }
 
-// ─── Crear / Editar Servicio ─────────────────────────────
-function abrirModalServicio(servicio = null) {
-    document.getElementById("servicioModalTitle").textContent = servicio ? `Editar Servicio ${servicio.codigo}` : "Crear Nuevo Servicio";
-    document.getElementById("formServicioId").value    = servicio?.id || "";
-    document.getElementById("formCodigo").value        = servicio?.codigo || "";
-    document.getElementById("formCodigo").readOnly     = !!servicio;
-    document.getElementById("formNombre").value        = servicio?.nombre || "";
-    document.getElementById("formNivel1").value        = servicio?.nivel1_id || "";
-    document.getElementById("formClase").value         = servicio?.clase_id || "";
-    document.getElementById("formCriticidad").value    = servicio?.criticidad_id || "";
-    document.getElementById("formTipo").value          = servicio?.tipo_id || "";
-    document.getElementById("formMetrica").value       = servicio?.metrica || "";
-    document.getElementById("formMinimo").value        = servicio?.minimo ?? "";
-    document.getElementById("formMaximo").value        = servicio?.maximo ?? "";
-    document.getElementById("formDescripcion").value   = servicio?.descripcion || "";
-    document.getElementById("formActivo").value        = servicio?.activo || "S";
-    document.getElementById("formServicioError").classList.add("hidden");
+async function abrirModalServicio(id = null) {
+    const errBox = document.getElementById("formServicioError");
+    errBox.classList.add("hidden");
+    document.getElementById("servicioForm").reset();
 
-    // Handle section → user relationship
-    const seccionId = servicio?.seccion_id || null;
-    document.getElementById("formSeccion").value = seccionId || "";
-    filtrarUsuariosPorSeccion(seccionId);
-    setTimeout(() => {
-        document.getElementById("formUsuario").value = servicio?.usuario_id || "";
-    }, 50);
-
+    if (id) {
+        document.getElementById("servicioModalTitle").textContent = "Editar Servicio";
+        document.getElementById("formServicioId").value = id;
+        try {
+            const res = await apiFetch(`/api/servicios/${id}`);
+            const s = await res.json();
+            document.getElementById("formCodigo").value = s.codigo;
+            document.getElementById("formNombre").value = s.nombre;
+            document.getElementById("formNivel1").value = s.nivel1_id;
+            document.getElementById("formClase").value  = s.clase_id || "";
+            document.getElementById("formCriticidad").value = s.criticidad_id || "";
+            document.getElementById("formTipo").value   = s.tipo_id || "";
+            document.getElementById("formMetrica").value = s.metrica || "";
+            document.getElementById("formMinimo").value = s.minimo ?? "";
+            document.getElementById("formMaximo").value = s.maximo ?? "";
+            document.getElementById("formDescripcion").value = s.descripcion || "";
+            document.getElementById("formActivo").value = s.activo || "S";
+            document.getElementById("formSeccion").value = s.seccion_responsable_id || "";
+            filtrarUsuariosPorSeccion(s.seccion_responsable_id, s.usuario_responsable_id);
+        } catch (err) {
+            showToast("Error cargando servicio", "error");
+            return;
+        }
+    } else {
+        document.getElementById("servicioModalTitle").textContent = "Crear Nuevo Servicio";
+        document.getElementById("formServicioId").value = "";
+    }
     openModal("servicioModal");
-}
-
-async function editarServicio(id) {
-    try {
-        const res = await apiFetch(`/servicios/${id}`);
-        if (!res.ok) return;
-        abrirModalServicio(await res.json());
-    } catch (_) {
-        showToast("Error al cargar servicio para edición", "error");
-    }
 }
 
 async function handleGuardarServicio(e) {
     e.preventDefault();
-    const errEl = document.getElementById("formServicioError");
-    errEl.classList.add("hidden");
-
-    const id     = document.getElementById("formServicioId").value;
-    const isEdit = !!id;
-
-    const minVal = document.getElementById("formMinimo").value;
-    const maxVal = document.getElementById("formMaximo").value;
-    const minimo = minVal !== "" ? parseFloat(minVal) : null;
-    const maximo = maxVal !== "" ? parseFloat(maxVal) : null;
-
-    // Client-side P09 validation
-    if (minimo !== null && maximo !== null && minimo > maximo) {
-        errEl.textContent = "⚠ Error P09: El umbral mínimo no puede ser mayor que el máximo.";
-        errEl.classList.remove("hidden");
-        return;
-    }
+    const id = document.getElementById("formServicioId").value;
+    const errBox = document.getElementById("formServicioError");
+    errBox.classList.add("hidden");
 
     const payload = {
-        codigo:        document.getElementById("formCodigo").value.trim(),
-        nombre:        document.getElementById("formNombre").value.trim(),
-        nivel1_id:     parseInt(document.getElementById("formNivel1").value) || null,
-        clase_id:      parseInt(document.getElementById("formClase").value) || null,
+        codigo: document.getElementById("formCodigo").value.trim(),
+        nombre: document.getElementById("formNombre").value.trim(),
+        nivel1_id: parseInt(document.getElementById("formNivel1").value),
+        clase_id: parseInt(document.getElementById("formClase").value) || null,
         criticidad_id: parseInt(document.getElementById("formCriticidad").value) || null,
-        tipo_id:       parseInt(document.getElementById("formTipo").value) || null,
-        seccion_id:    parseInt(document.getElementById("formSeccion").value) || null,
-        usuario_id:    parseInt(document.getElementById("formUsuario").value) || null,
-        metrica:       document.getElementById("formMetrica").value.trim() || null,
-        minimo,
-        maximo,
-        descripcion:   document.getElementById("formDescripcion").value.trim() || null,
-        activo:        document.getElementById("formActivo").value
+        tipo_id: parseInt(document.getElementById("formTipo").value) || null,
+        metrica: document.getElementById("formMetrica").value.trim() || null,
+        minimo: document.getElementById("formMinimo").value !== "" ? parseFloat(document.getElementById("formMinimo").value) : null,
+        maximo: document.getElementById("formMaximo").value !== "" ? parseFloat(document.getElementById("formMaximo").value) : null,
+        descripcion: document.getElementById("formDescripcion").value.trim() || null,
+        activo: document.getElementById("formActivo").value,
+        seccion_responsable_id: parseInt(document.getElementById("formSeccion").value) || null,
+        usuario_responsable_id: parseInt(document.getElementById("formUsuario").value) || null
     };
 
-    if (!payload.nivel1_id) {
-        errEl.textContent = "⚠ Debes seleccionar un Servicio Nivel 1.";
-        errEl.classList.remove("hidden");
+    if (payload.minimo !== null && payload.maximo !== null && payload.minimo > payload.maximo) {
+        errBox.textContent = "El valor mínimo no puede ser mayor que el máximo.";
+        errBox.classList.remove("hidden");
         return;
     }
 
     try {
-        const url    = isEdit ? `/servicios/${id}` : `/servicios/`;
-        const method = isEdit ? "PUT" : "POST";
+        const url    = id ? `/api/servicios/${id}` : "/api/servicios";
+        const method = id ? "PUT" : "POST";
         const res    = await apiFetch(url, {
             method,
             headers: { "Content-Type": "application/json" },
@@ -607,284 +1179,352 @@ async function handleGuardarServicio(e) {
         });
 
         if (!res.ok) {
-            const err = await res.json();
-            errEl.textContent = `⚠ ${err.detail || "Error al guardar el servicio."}`;
-            errEl.classList.remove("hidden");
-            return;
+            const data = await res.json();
+            throw new Error(data.detail || "Error al guardar el servicio");
         }
 
         closeModal("servicioModal");
-        showToast(`Servicio ${isEdit ? "actualizado" : "creado"} exitosamente ✓`, "success");
-        await cargarCatalogosAuxiliares();
+        showToast(id ? "Servicio actualizado correctamente" : "Servicio creado exitosamente", "success");
         cargarServicios();
-        cargarKPIs();
-    } catch (_) {
-        errEl.textContent = "⚠ Error de conexión al guardar.";
-        errEl.classList.remove("hidden");
+    } catch (err) {
+        errBox.textContent = err.message;
+        errBox.classList.remove("hidden");
     }
 }
 
-async function desactivarServicio(id) {
-    if (!confirm("¿Confirmas la baja lógica de este servicio?\n\nEl registro se desactivará pero no se eliminará de la base de datos.")) return;
+async function confirmarBajaServicio(id, codigo) {
+    if (!confirm(`¿Estás seguro de dar de baja lógica al servicio ${codigo}?`)) return;
     try {
-        const res = await apiFetch(`/servicios/${id}`, { method: "DELETE" });
-        if (res.ok) {
-            showToast("Servicio dado de baja lógicamente ✓", "success");
-            cargarServicios();
-            cargarKPIs();
-        } else {
-            const err = await res.json();
-            showToast(err.detail || "Error al dar de baja", "error");
-        }
-    } catch (_) {
-        showToast("Error de comunicación", "error");
+        const res = await apiFetch(`/api/servicios/${id}`, { method: "DELETE" });
+        if (!res.ok) throw new Error("No se pudo dar de baja");
+        showToast(`Servicio ${codigo} dado de baja lógica`, "success");
+        cargarServicios();
+    } catch (err) {
+        showToast(err.message, "error");
     }
 }
 
-// ─── Organización ────────────────────────────────────────
+function resetFilters() {
+    ["searchInput", "filterNivel1", "filterClase", "filterCriticidad", "filterTipo", "filterActivo"]
+        .forEach(id => document.getElementById(id).value = "");
+    currentServicioPage = 0;
+    cargarServicios();
+}
+
+// ════════════════════════════════════════════════════════
+// MÓDULO: ESTRUCTURA ORGANIZACIONAL & USUARIOS
+// ════════════════════════════════════════════════════════
+
 async function cargarOrganizacion() {
-    const container = document.getElementById("orgTreeContainer");
-    if (!token) {
-        container.innerHTML = `<div class="table-empty">
-            <svg width="48" height="48" fill="none" viewBox="0 0 24 24" stroke="#94a3b8" stroke-width="1.5"><path d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
-            <span>Inicia sesión para visualizar la jerarquía organizacional</span>
-        </div>`;
-        return;
-    }
-    container.innerHTML = '<div class="table-empty"><div class="spinner"></div><span>Cargando jerarquía…</span></div>';
-
+    const c = document.getElementById("orgTreeContainer");
     try {
-        const [eR, aR, dR, sR, pR, uR] = await Promise.all([
-            apiFetch("/empresas/"),
-            apiFetch("/areas/"),
-            apiFetch("/departamentos/"),
-            apiFetch("/secciones/"),
-            apiFetch("/puestos/"),
-            apiFetch("/usuarios/")
-        ]);
+        const res = await apiFetch("/api/organizacion");
+        if (!res.ok) throw new Error("Error cargando estructura");
+        const org = await res.json();
 
-        if (!eR.ok) {
-            container.innerHTML = `<div class="table-empty">
-                <svg width="48" height="48" fill="none" viewBox="0 0 24 24" stroke="#94a3b8" stroke-width="1.5"><path d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
-                <span>Inicia sesión para visualizar la jerarquía organizacional</span>
-            </div>`;
-            return;
-        }
-
-        const [empresas, areas, deptos, secciones, puestos, usuarios] = await Promise.all([
-            eR.json(), aR.json(), dR.json(), sR.json(), pR.json(), uR.json()
-        ]);
-
-        if (empresas.length === 0) {
-            container.innerHTML = '<div class="table-empty"><span>No hay empresas registradas aún.</span></div>';
-            return;
-        }
-
-        const buildChildren = (children) => children.length === 0 ? "" : `<div class="org-node-children">${children.join("")}</div>`;
-
-        const nodes = empresas.map(emp => {
-            const areasEmp = areas.filter(a => a.empresa_id === emp.id);
-            const areaNodes = areasEmp.map(area => {
-                const deptosArea = deptos.filter(d => d.area_id === area.id);
-                const deptoNodes = deptosArea.map(dep => {
-                    const secsDeptos = secciones.filter(s => s.departamento_id === dep.id);
-                    const secNodes = secsDeptos.map(sec => {
-                        const puesSec = puestos.filter(p => p.seccion_id === sec.id);
-                        const pueNodes = puesSec.map(pue => {
-                            const usrsPue = usuarios.filter(u => u.puesto_id === pue.id);
-                            const usrNodes = usrsPue.map(u => `
+        c.innerHTML = `
+            <div class="org-tree">
+                ${org.map(emp => `
+                    <div class="org-node">
+                        <span class="org-node-title">🏢 Empresa: <strong>${escapeHtml(emp.nombre)}</strong></span>
+                        <div class="org-node-children">
+                            ${emp.areas.map(a => `
                                 <div class="org-node">
-                                    <div class="org-node-header" style="cursor:default;">
-                                        <span class="org-node-icon">👤</span>
-                                        <span class="org-node-label">${u.nombre}</span>
-                                        <span class="org-node-code">${u.correo}</span>
-                                        <span class="badge badge-${u.rol === 'administrador' ? 'admin' : 'consulta'}">${u.rol}</span>
-                                        ${u.activo ? '' : '<span class="badge badge-n">Inactivo</span>'}
+                                    <span class="org-node-title">📁 Área: <strong>${escapeHtml(a.nombre)}</strong></span>
+                                    <div class="org-node-children">
+                                        ${a.departamentos.map(d => `
+                                            <div class="org-node">
+                                                <span class="org-node-title">📂 Depto: <strong>${escapeHtml(d.nombre)}</strong></span>
+                                                <div class="org-node-children">
+                                                    ${d.secciones.map(s => `
+                                                        <div class="org-node">
+                                                            <span class="org-node-title">👥 Sección: <strong>${escapeHtml(s.nombre)}</strong></span>
+                                                            <div class="org-node-children">
+                                                                ${s.puestos.map(p => `
+                                                                    <div class="org-node">
+                                                                        <span class="org-node-title">💼 Puesto: <strong>${escapeHtml(p.nombre)}</strong> (${p.usuarios.length} usuarios)</span>
+                                                                    </div>
+                                                                `).join("")}
+                                                            </div>
+                                                        </div>
+                                                    `).join("")}
+                                                </div>
+                                            </div>
+                                        `).join("")}
                                     </div>
-                                </div>`).join("");
-                            return `<div class="org-node"><div class="org-node-header"><span class="org-node-icon">💼</span><span class="org-node-label">${pue.nombre}</span><span class="org-node-code">${pue.codigo}</span></div>${buildChildren([usrNodes])}</div>`;
-                        });
-                        return `<div class="org-node"><div class="org-node-header"><span class="org-node-icon">📑</span><span class="org-node-label">${sec.nombre}</span><span class="org-node-code">${sec.codigo}</span></div>${buildChildren(pueNodes)}</div>`;
-                    });
-                    return `<div class="org-node"><div class="org-node-header"><span class="org-node-icon">🏬</span><span class="org-node-label">${dep.nombre}</span><span class="org-node-code">${dep.codigo}</span></div>${buildChildren(secNodes)}</div>`;
-                });
-                return `<div class="org-node"><div class="org-node-header"><span class="org-node-icon">📁</span><span class="org-node-label">${area.nombre}</span><span class="org-node-code">${area.codigo}</span></div>${buildChildren(deptoNodes)}</div>`;
-            });
-            return `<div class="org-node"><div class="org-node-header" style="background:#f0f4ff;border-radius:8px;padding:12px 16px;"><span class="org-node-icon">🏢</span><span class="org-node-label" style="font-size:15px;">${emp.nombre}</span><span class="org-node-code">${emp.codigo}</span></div>${buildChildren(areaNodes)}</div>`;
-        });
-
-        container.innerHTML = `<div class="org-tree">${nodes.join("")}</div>`;
-
-    } catch (_) {
-        container.innerHTML = '<div class="table-empty"><span>Inicia sesión para explorar la jerarquía organizacional.</span></div>';
+                                </div>
+                            `).join("")}
+                        </div>
+                    </div>
+                `).join("")}
+            </div>
+        `;
+    } catch (err) {
+        c.innerHTML = `<div class="table-empty text-danger">Error: ${err.message}</div>`;
     }
 }
 
-// ─── Usuarios Tab ────────────────────────────────────────
 async function cargarUsuarios() {
     const tbody = document.getElementById("usuariosTbody");
-    if (!tbody) return;
-    tbody.innerHTML = '<tr><td colspan="7" class="table-empty"><div class="spinner"></div></td></tr>';
-
-    if (!token) {
-        tbody.innerHTML = '<tr><td colspan="7" class="table-empty"><span>Inicia sesión para gestionar usuarios</span></td></tr>';
-        return;
-    }
-
     try {
-        const res = await apiFetch("/usuarios/");
-        if (!res.ok) return;
+        const res = await apiFetch("/api/usuarios");
+        if (!res.ok) throw new Error("Error cargando usuarios");
         const usuarios = await res.json();
 
-        tbody.innerHTML = "";
-        usuarios.forEach((u, i) => {
-            const puestoNombre = catalogos.puestos.find(p => p.id === u.puesto_id)?.nombre || "—";
-            const tr = document.createElement("tr");
-            tr.innerHTML = `
-                <td><span class="text-muted">${i + 1}</span></td>
-                <td><strong>${u.nombre}</strong></td>
-                <td>${u.correo}</td>
-                <td><span class="badge badge-${u.rol === 'administrador' ? 'admin' : 'consulta'}">${u.rol}</span></td>
-                <td>${puestoNombre}</td>
-                <td>${u.activo ? '<span class="badge badge-s">Activo</span>' : '<span class="badge badge-n">Inactivo</span>'}</td>
+        tbody.innerHTML = usuarios.map(u => `
+            <tr>
+                <td>${u.id}</td>
+                <td><strong>${escapeHtml(u.nombre)}</strong></td>
+                <td>${escapeHtml(u.correo)}</td>
+                <td><span class="role-badge role-${u.rol === 'administrador' ? 'admin' : 'consulta'}">${escapeHtml(u.rol)}</span></td>
+                <td>${u.puesto ? escapeHtml(u.puesto.nombre) : '—'}</td>
+                <td><span class="badge ${u.activo ? 'badge-s' : 'badge-n'}">${u.activo ? 'Activo' : 'Inactivo'}</span></td>
                 <td>
-                    ${u.correo !== currentUser?.correo && isAdmin() ? `
-                    <button class="btn-icon btn-icon-danger" onclick="desactivarUsuario(${u.id})" title="Desactivar usuario">🗑️</button>` : '<span class="text-muted">—</span>'}
-                </td>`;
-            tbody.appendChild(tr);
-        });
-    } catch (_) {
-        tbody.innerHTML = '<tr><td colspan="7" class="table-empty"><span>Error al cargar usuarios</span></td></tr>';
+                    <button class="btn btn-sm btn-ghost" onclick="toggleEstadoUsuario(${u.id}, ${u.activo})">${u.activo ? 'Desactivar' : 'Activar'}</button>
+                </td>
+            </tr>
+        `).join("");
+    } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="7" class="table-empty text-danger">Error: ${err.message}</td></tr>`;
     }
 }
 
 function abrirModalUsuario() {
     document.getElementById("usuarioForm").reset();
     document.getElementById("formUsuarioError").classList.add("hidden");
+    const pSelect = document.getElementById("formUsuarioPuesto");
+    pSelect.innerHTML = `<option value="">Sin puesto asignado</option>` +
+        catalogos.puestos.map(p => `<option value="${p.id}">${escapeHtml(p.nombre)}</option>`).join("");
     openModal("usuarioModal");
 }
 
 async function handleCrearUsuario(e) {
     e.preventDefault();
-    const errEl = document.getElementById("formUsuarioError");
-    errEl.classList.add("hidden");
+    const errBox = document.getElementById("formUsuarioError");
+    errBox.classList.add("hidden");
 
     const payload = {
-        nombre:   document.getElementById("formUsuarioNombre").value.trim(),
-        correo:   document.getElementById("formUsuarioCorreo").value.trim(),
+        nombre: document.getElementById("formUsuarioNombre").value.trim(),
+        correo: document.getElementById("formUsuarioCorreo").value.trim(),
         password: document.getElementById("formUsuarioPassword").value,
-        rol:      document.getElementById("formUsuarioRol").value,
-        puesto_id:parseInt(document.getElementById("formUsuarioPuesto").value) || null,
-        activo:   true
+        rol: document.getElementById("formUsuarioRol").value,
+        puesto_id: parseInt(document.getElementById("formUsuarioPuesto").value) || null
     };
 
     try {
-        const res = await apiFetch("/usuarios/", {
-            method:  "POST",
+        const res = await apiFetch("/api/usuarios", {
+            method: "POST",
             headers: { "Content-Type": "application/json" },
-            body:    JSON.stringify(payload)
+            body: JSON.stringify(payload)
         });
-
         if (!res.ok) {
-            const err = await res.json();
-            errEl.textContent = `⚠ ${err.detail || "Error al crear el usuario."}`;
-            errEl.classList.remove("hidden");
-            return;
+            const data = await res.json();
+            throw new Error(data.detail || "Error al crear usuario");
         }
-
         closeModal("usuarioModal");
-        showToast("Usuario creado exitosamente ✓", "success");
-        await cargarCatalogosAuxiliares();
+        showToast("Usuario creado correctamente", "success");
         cargarUsuarios();
-        cargarKPIs();
-    } catch (_) {
-        errEl.textContent = "⚠ Error de conexión.";
+    } catch (err) {
+        errBox.textContent = err.message;
+        errBox.classList.remove("hidden");
+    }
+}
+
+async function toggleEstadoUsuario(id, activoActual) {
+    try {
+        const res = await apiFetch(`/api/usuarios/${id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ activo: !activoActual })
+        });
+        if (!res.ok) throw new Error("Error actualizando usuario");
+        showToast("Estado de usuario actualizado", "success");
+        cargarUsuarios();
+    } catch (err) {
+        showToast(err.message, "error");
+    }
+}
+
+// ════════════════════════════════════════════════════════
+// MÓDULO: HARNESS ENGINEERING (P01–P18 SUITE)
+// ════════════════════════════════════════════════════════
+
+async function ejecutarHarnessEnVivo() {
+    const btn = document.getElementById("btnRunHarness");
+    const oldHtml = btn.innerHTML;
+    btn.innerHTML = `<div class="spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;margin-right:6px;"></div> Ejecutando Pytest en vivo…`;
+    btn.disabled = true;
+
+    try {
+        const res = await apiFetch("/harness/ejecutar");
+        if (!res.ok) throw new Error("Error ejecutando harness");
+        const report = await res.json();
+
+        document.getElementById("harnessSummary").classList.remove("hidden");
+        document.getElementById("harnessSummaryTitle").textContent = `${report.passed} / ${report.total} Pruebas de Aceptación Superadas (${report.cobertura} Cobertura)`;
+        document.getElementById("harnessSummaryMeta").textContent = `Tiempo de ejecución: ${report.duracion_segundos}s • 0 errores detectados • Base de datos: PostgreSQL`;
+
+        const tbody = document.getElementById("harnessTbody");
+        tbody.innerHTML = report.resultados.map(r => `
+            <tr>
+                <td><code>${r.codigo}</code></td>
+                <td>${escapeHtml(r.nombre)}</td>
+                <td><code>${escapeHtml(r.componente)}</code></td>
+                <td>${escapeHtml(r.criterio || 'Criterio ITIL comprobado')}</td>
+                <td><span class="badge ${r.badge}">${r.estado === 'PASSED' ? '✓ PASSED' : '✗ FAILED'}</span></td>
+            </tr>
+        `).join("");
+
+        showToast("¡Suite completa ejecutada exitosamente!", "success");
+    } catch (err) {
+        showToast("Error ejecutando harness: " + err.message, "error");
+    } finally {
+        btn.innerHTML = oldHtml;
+        btn.disabled = false;
+    }
+}
+
+// ════════════════════════════════════════════════════════
+// AUXILIARES & CARGA DE CATÁLOGOS
+// ════════════════════════════════════════════════════════
+
+async function cargarCatalogosAuxiliares() {
+    try {
+        const [n1, cl, cr, tp, sec, pt, colas, cats, srvN2] = await Promise.all([
+            fetch("/api/catalogos/nivel1").then(r => r.json()).catch(() => []),
+            fetch("/api/catalogos/clases").then(r => r.json()).catch(() => []),
+            fetch("/api/catalogos/criticidades").then(r => r.json()).catch(() => []),
+            fetch("/api/catalogos/tipos").then(r => r.json()).catch(() => []),
+            fetch("/api/catalogos/secciones").then(r => r.json()).catch(() => []),
+            fetch("/api/catalogos/puestos").then(r => r.json()).catch(() => []),
+            fetch("/api/colas").then(r => r.json()).catch(() => []),
+            fetch("/api/cmdb/categorias").then(r => r.json()).catch(() => []),
+            fetch("/api/servicios?limit=100").then(r => r.json()).catch(() => [])
+        ]);
+
+        catalogos = { 
+            nivel1: n1, clases: cl, criticidades: cr, tipos: tp, 
+            secciones: sec, puestos: pt, colas: colas, categoriasCI: cats,
+            serviciosN2: srvN2
+        };
+
+        // Llenar selects de filtros catálogo
+        poblarSelect("filterNivel1", n1, "id", "nombre", "Todos Nivel 1", "codigo");
+        poblarSelect("filterClase", cl, "id", "nombre", "Todas las Clases");
+        poblarSelect("filterCriticidad", cr, "id", "nombre", "Toda Criticidad");
+        poblarSelect("filterTipo", tp, "id", "nombre", "Todos los Tipos");
+
+        // Llenar selects modal servicio
+        poblarSelect("formNivel1", n1, "id", "nombre", "Seleccionar Nivel 1", "codigo");
+        poblarSelect("formClase", cl, "id", "nombre", "Seleccionar Clase");
+        poblarSelect("formCriticidad", cr, "id", "nombre", "Seleccionar Criticidad");
+        poblarSelect("formTipo", tp, "id", "nombre", "Seleccionar Tipo");
+        poblarSelect("formSeccion", sec, "id", "nombre", "Sin sección asignada");
+
+        // Llenar selects tickets y colas
+        poblarSelect("ticketFilterCola", colas, "id", "nombre", "Todas las Colas");
+
+        // Llenar categorías CMDB
+        poblarSelect("cmdbFilterCategoria", cats, "id", "nombre", "Todas las Categorías");
+
+    } catch (e) {
+        console.warn("Error cargando catálogos auxiliares:", e);
+    }
+}
+
+function poblarSelect(id, items, valKey, textKey, defaultText = null, codeKey = null) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    let html = defaultText ? `<option value="">${defaultText}</option>` : "";
+    html += (items || []).map(i => {
+        const text = codeKey ? `${i[codeKey]} - ${i[textKey]}` : i[textKey];
+        return `<option value="${i[valKey]}">${escapeHtml(text)}</option>`;
+    }).join("");
+    el.innerHTML = html;
+}
+
+async function filtrarUsuariosPorSeccion(seccionId, selectUsuarioId = null) {
+    const uSelect = document.getElementById("formUsuario");
+    if (!uSelect) return;
+    uSelect.innerHTML = `<option value="">Cargando…</option>`;
+    if (!seccionId) {
+        uSelect.innerHTML = `<option value="">Primero selecciona una sección</option>`;
+        return;
+    }
+    try {
+        const res = await apiFetch(`/api/secciones/${seccionId}/usuarios`);
+        const usuarios = await res.json();
+        poblarSelect("formUsuario", usuarios, "id", "nombre", "Sin usuario específico");
+        if (selectUsuarioId) uSelect.value = selectUsuarioId;
+    } catch {
+        uSelect.innerHTML = `<option value="">Error cargando usuarios</option>`;
+    }
+}
+
+// ─── Login & Auth Operations ─────────────────────────────
+async function doLogin(username, password) {
+    const errEl = document.getElementById("loginError");
+    errEl.classList.add("hidden");
+    try {
+        const body = new URLSearchParams({ username, password });
+        const res  = await fetch("/token", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: body.toString()
+        });
+        if (!res.ok) {
+            const data = await res.json();
+            throw new Error(data.detail || "Credenciales incorrectas");
+        }
+        const data = await res.json();
+        token       = data.access_token;
+        currentUser = {
+            id:     data.user_id,
+            nombre: data.nombre,
+            correo: data.correo,
+            rol:    data.rol
+        };
+        localStorage.setItem("token", token);
+        localStorage.setItem("user", JSON.stringify(currentUser));
+
+        renderAuthUI();
+        closeModal("loginModal");
+        showToast(`Bienvenido, ${currentUser.nombre}`, "success");
+
+        cargarTickets();
+        cargarDashboardKPIs();
+        cargarMisSolicitudes();
+        if (isAdmin()) cargarUsuarios();
+    } catch (err) {
+        errEl.textContent = err.message;
         errEl.classList.remove("hidden");
     }
 }
 
-async function desactivarUsuario(id) {
-    if (!confirm("¿Confirmas la desactivación de este usuario?\n\nEl registro se mantiene en la base de datos.")) return;
-    try {
-        const res = await apiFetch(`/usuarios/${id}`, { method: "DELETE" });
-        if (res.ok) {
-            showToast("Usuario desactivado correctamente ✓", "success");
-            await cargarCatalogosAuxiliares();
-            cargarUsuarios();
-            cargarKPIs();
-        } else {
-            const err = await res.json();
-            showToast(err.detail || "Error al desactivar usuario", "error");
-        }
-    } catch (_) {
-        showToast("Error de comunicación", "error");
-    }
-}
-
-// ─── Toast ───────────────────────────────────────────────
-function showToast(msg, type = "info") {
-    const t = document.getElementById("toast");
-    t.textContent = msg;
-    t.className   = `toast toast-${type}`;
-    t.classList.remove("hidden");
-    clearTimeout(t._timeout);
-    t._timeout = setTimeout(() => t.classList.add("hidden"), 4500);
-}
-
-// ─── Harness Engineering Runner ──────────────────────────
-async function ejecutarHarnessEnVivo() {
-    const btn = document.getElementById("btnRunHarness");
-    const summaryEl = document.getElementById("harnessSummary");
-    const tbody = document.getElementById("harnessTbody");
-
-    if (btn) {
-        btn.disabled = true;
-        btn.innerHTML = `<span class="spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px;"></span> Ejecutando Pytest…`;
-    }
-
-    try {
-        const res = await fetch("/harness/ejecutar");
-        if (!res.ok) throw new Error("Error en ejecución de suite");
-        const data = await res.json();
-
-        if (summaryEl) {
-            summaryEl.classList.remove("hidden");
-            document.getElementById("harnessSummaryTitle").textContent = 
-                `${data.passed} / ${data.total} Pruebas de Aceptación Superadas (${data.cobertura} Cobertura)`;
-            document.getElementById("harnessSummaryMeta").textContent = 
-                `Tiempo de ejecución: ${data.duracion_segundos}s • ${data.failed} errores detectados • CLI: ${data.comando_cli}`;
-        }
-
-        if (tbody && data.criterios) {
-            tbody.innerHTML = "";
-            data.criterios.forEach(c => {
-                const tr = document.createElement("tr");
-                tr.innerHTML = `
-                    <td><code>${c.codigo}</code></td>
-                    <td><strong>${c.nombre}</strong></td>
-                    <td><code>${c.componente}</code></td>
-                    <td>${c.descripcion}</td>
-                    <td><span class="badge ${c.badge}">✓ ${c.estado}</span></td>
-                `;
-                tbody.appendChild(tr);
+async function handleLogout(forced = false) {
+    if (token) {
+        try {
+            await fetch("/logout", {
+                method: "POST",
+                headers: { "Authorization": `Bearer ${token}` }
             });
-        }
-        showToast("Suite de Pruebas P01–P12 certificada exitosamente ✓", "success");
-    } catch (err) {
-        showToast("Error al ejecutar suite de pruebas", "error");
-    } finally {
-        if (btn) {
-            btn.disabled = false;
-            btn.innerHTML = `
-                <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                ▶ Re-ejecutar Suite en Vivo`;
-        }
+        } catch { /* ignore */ }
     }
+    token       = null;
+    currentUser = null;
+    localStorage.removeItem("token");
+    localStorage.removeItem("user");
+    renderAuthUI();
+    cargarMisSolicitudes();
+    if (!forced) showToast("Sesión cerrada correctamente", "info");
 }
 
-// ─── Global Exposure (for onclick handlers) ──────────────
-window.verFicha              = verFicha;
-window.editarServicio        = editarServicio;
-window.desactivarServicio    = desactivarServicio;
-window.desactivarUsuario     = desactivarUsuario;
-window.ejecutarHarnessEnVivo = ejecutarHarnessEnVivo;
+function escapeHtml(str) {
+    if (str === null || str === undefined) return "";
+    return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}

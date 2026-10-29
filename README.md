@@ -1,240 +1,143 @@
-# Sistema de Gestión del Catálogo de Servicios de TI
+# Sistema Integral de Gestión del Catálogo de Servicios TI, CMDB y Service Desk (ITIL)
 
 > **Asignatura:** Software Avanzado | USAC  
 > **Estudiante:** Andrés Calvo — Carné `201712620`  
-> **Repositorio:** `https://github.com/AndresCalvo98/parcial-catalogo-servicios-201712620`  
-> **Etiqueta de Entrega:** `parcial-v2.0`
+> **Catedrático:** Msc. Marco Tulio Aldana Prillwitz | **GitHub:** `maldanap-usac`  
+> **Repositorio:** `parcial-catalogo-servicios-201712620`  
+> **Entrega:** Parcial 3 / Tarea Service Desk  
 
 ---
 
-## Descripción General
+## 🚀 Descripción General del Sistema
 
-Aplicación web completa y API RESTful para gestionar el catálogo de servicios de TI de una organización, construida con:
-
-- **Backend:** FastAPI + SQLAlchemy (Python 3.11)
-- **Base de datos:** PostgreSQL 15
-- **Contenedores:** Docker + Docker Compose
-- **Frontend:** HTML5 + CSS3 + JavaScript Vanilla (Single-Page Application)
-- **Autenticación:** JWT local con hash `bcrypt` (OAuth2 Password Flow)
-
-La solución aplica y demuestra **Context Engineering**, **Prompt Engineering** y **Harness Engineering** según los requisitos del parcial.
-
----
-
-## Requisitos Previos
-
-Antes de comenzar, asegúrate de tener instalado:
-
-| Herramienta | Versión mínima | Verificación |
-|---|---|---|
-| Docker Desktop | 24.x | `docker --version` |
-| Docker Compose | 2.x (incluido en Docker Desktop) | `docker compose version` |
-
-> ⚠ Los puertos **`8000`** y **`5432`** deben estar libres en tu máquina local.
+Plataforma empresarial de gestión tecnológica que integra de extremo a extremo:
+1. **Catálogo de Servicios de TI:** 12 códigos Nivel 1 y 46 servicios físicos Nivel 2 extraídos e importados de forma idempotente desde `CatalogoServicios.xlsx` con unificación canónica de `SE.12`.
+2. **Estructura Organizacional:** Jerarquía corporativa estricta de 6 niveles (`Empresa ➔ Área ➔ Depto ➔ Sección ➔ Puesto ➔ Usuario`) con asignación obligatoria de responsables.
+3. **CMDB a Escala Real ($\ge 5,000$ CIs):** Base de datos de configuración estructurada en 3 niveles taxonómicos (Familia, Clase, Tipo según Lección 22), relaciones topológicas acíclicas (DAG) y vinculación a los 46 servicios N2.
+4. **Graph Engineering:** Algoritmo DFS para detección y rechazo de ciclos en dependencias, junto con cálculo instantáneo de impacto en cascada hacia los servicios de negocio.
+5. **Service Desk Multiproceso (ITIL):** Implementación integral de los **7 procesos de TI** (Nuevos Servicios, Cambios con aprobación CAB, Incidentes I0–I6, Eventos E0–E3, Problemas con KEDB, Accesos con segregación y Requisiciones).
+6. **Gestión de Colas y Concurrencia Atómica:** Bloqueo pesimista a nivel de fila (`SELECT ... FOR UPDATE` retornando `HTTP 409 Conflict`) al tomar tickets.
+7. **Portales Web Especializados:** Consola de Agente/Mesa de Ayuda, Portal de Autoservicio con Base de Conocimiento (FAQ Nivel 0) y Dashboard en vivo de SLAs (MTTA, MTTR, cumplimiento %).
+8. **Harness Engineering (P01–P18):** Suite de 18 pruebas automatizadas de aceptación con 100% de éxito.
 
 ---
 
-## 1. Clonar el Repositorio
+## 🛠️ Pila Tecnológica
 
+* **Backend:** FastAPI (Python 3.11 / 3.14) con validación estricta de esquemas Pydantic V2.
+* **Base de Datos:** PostgreSQL 15 con transaccionalidad ACID e integridad referencial.
+* **ORM:** SQLAlchemy 2.0 (consultas parametrizadas y bloqueos de concurrencia).
+* **Seguridad:** Autenticación local con JWT y algoritmos de salado/hash `bcrypt`.
+* **Contenedores:** Docker y Docker Compose para ejecución reproducible sin dependencias del host.
+* **Frontend:** Single Page Application (SPA) en HTML5, CSS3 moderno y Vanilla JS (sin frameworks pesados).
+* **Test Harness:** Pytest 9.2.0 automatizado con TestClient.
+
+---
+
+## 📋 Requisitos Previos
+
+* **Docker Desktop** (versión 24.x o superior) con Docker Compose habilitado.
+* Puertos libres en el anfitrión: **`8000`** (Web / API) y **`5432`** (PostgreSQL).
+
+---
+
+## ⚡ Guía de Inicio Rápido (Despliegue en 3 Pasos)
+
+### 1. Clonar el Repositorio
 ```bash
 git clone https://github.com/AndresCalvo98/parcial-catalogo-servicios-201712620.git
 cd parcial-catalogo-servicios-201712620
 ```
 
----
-
-## 2. Configurar las Variables de Entorno
-
-El archivo `.env` contiene las credenciales de la base de datos y la clave secreta JWT. Ya viene pre-configurado, pero si necesitas generarlo desde la plantilla:
-
-```bash
-# Solo si no existe el archivo .env:
-cp .env.example .env
-```
-
-> ℹ El `.env` de este repositorio ya tiene valores funcionales listos para evaluación. **No es necesario editarlo**.
-
----
-
-## 3. Construir y Levantar los Contenedores
-
+### 2. Levantar el Ecosistema en Docker
 ```bash
 docker compose up --build -d
 ```
+> El contenedor de backend esperará automáticamente a que la base de datos PostgreSQL esté lista (`healthy`) antes de inicializar la API.
 
-Este comando:
-1. Construye la imagen del backend con el `Dockerfile`
-2. Levanta el contenedor `parcial_db` (PostgreSQL)
-3. Espera a que la DB esté lista (healthcheck integrado)
-4. Levanta el contenedor `parcial_backend` (FastAPI)
-
-Para verificar que ambos contenedores están corriendo:
+### 3. Población Inicial de Datos (Demostración y Evaluación)
+Ejecuta los siguientes comandos para crear las cuentas de prueba, importar el catálogo de Excel y generar los 5,000 CIs deterministas:
 
 ```bash
-docker compose ps
+# 1. Crear estructura organizacional, cuentas de prueba, 7 colas y tickets demo
+docker exec -it parcial_backend python scripts/create_admin.py
+
+# 2. Ingesta idempotente del catálogo original de Excel (12 N1 / 46 N2)
+docker exec -it parcial_backend python scripts/import_excel.py
+
+# 3. Generación determinista de al menos 5,000 elementos de configuración (CMDB)
+docker exec -it parcial_backend python scripts/generate_cmdb.py --seed 42 --count 5000
 ```
-
-Para ver los logs del backend en tiempo real:
-
-```bash
-docker compose logs -f backend
-```
-
-> ✅ Cuando veas `Application startup complete.` en los logs, el sistema está listo.
 
 ---
 
-## 4. Inicializar la Base de Datos (Opcional / Verificación)
+## 👥 Cuentas de Evaluación Rápida
 
-> 💡 **Nota de Arquitectura (Zero-Config):** El backend cuenta con un gestor `lifespan` que ejecuta automáticamente la verificación de tablas, importación de Excel y siembra de usuarios en el primer arranque. Si deseas comprobar el funcionamiento paso a paso o forzar la recarga manual, ejecuta los 3 comandos siguientes (todos son 100% **idempotentes**):
+La plataforma incluye 6 cuentas de demostración preconfiguradas localmente para evaluar todos los roles y procesos sin necesidad de registrarse:
 
-### Paso 1 — Crear tablas del modelo relacional
-
-```bash
-docker exec parcial_backend python scripts/init_db.py
-```
-
-**Qué hace:** Crea todas las tablas en PostgreSQL (`empresas`, `areas`, `departamentos`, `secciones`, `puestos`, `usuarios`, `servicios_nivel1`, `servicios_nivel2`, catálogos auxiliares).
-
----
-
-### Paso 2 — Importar catálogo desde Excel
-
-```bash
-docker exec parcial_backend python scripts/import_excel.py
-```
-
-**Qué hace:**
-- Lee el archivo `data/CatalogoServicios.xlsx`
-- Aplica `ffill` (Forward Fill) para resolver celdas combinadas
-- Resuelve el conflicto canónico del código `SE.12`
-- Normaliza catálogos de Clase, Criticidad y Tipo
-- Carga 12 servicios Nivel 1 y 46 servicios Nivel 2 con **idempotencia** (es re-ejecutable sin duplicados)
-
----
-
-### Paso 3 — Crear jerarquía organizacional y usuarios de demostración
-
-```bash
-docker exec parcial_backend python scripts/create_admin.py
-```
-
-**Qué hace:**
-- Crea la jerarquía: `USAC → DTI → Departamento Desarrollo → 2 Secciones → 2 Puestos`
-- Registra los 2 usuarios de evaluación (admin y consulta)
-- Vincula 3 asignaciones válidas de servicios a secciones y usuarios
-
----
-
-## 5. Acceder al Sistema
-
-Una vez completados los pasos anteriores:
-
-| Recurso | URL |
-|---|---|
-| 🌐 **Aplicación Web (Frontend)** | [http://localhost:8000](http://localhost:8000) |
-| 📘 **Documentación API (Swagger UI)** | [http://localhost:8000/docs](http://localhost:8000/docs) |
-| 🔗 **API REST alternativa (ReDoc)** | [http://localhost:8000/redoc](http://localhost:8000/redoc) |
-
-### Credenciales de Evaluación
-
-| Rol | Correo | Contraseña | Permisos |
+| Usuario / Correo | Contraseña | Rol en Sistema | Función y Alcance |
 |---|---|---|---|
-| **Administrador** | `admin@demo.com` | `admin123` | CRUD completo, gestión de usuarios, bajas lógicas |
-| **Consulta** | `normal@demo.com` | `clave` | Solo lectura (GET). Operaciones de escritura rechazadas con HTTP 403 |
+| `admin@demo.com` | `admin123` | **administrador** | Control total de usuarios, organigrama, CMDB y catálogos. |
+| `agente1@demo.com` | `clave123` | **consulta / agente** | Agente de Soporte Nivel 1 (Mesa de Ayuda y Despacho). |
+| `agente2@demo.com` | `clave123` | **consulta / agente** | Especialista de Soporte Nivel 2 y Cambios. |
+| `aprobador@demo.com` | `clave123` | **consulta / aprobador** | Integrante del CAB y Jefatura para aprobación de Cambios y Accesos. |
+| `solicitante@demo.com` | `clave123` | **consulta / solicitante**| Usuario final para autoservicio, consulta de FAQs y apertura de tickets. |
+| `normal@demo.com` | `clave` | **consulta** | Usuario estándar de solo lectura (sin permisos de edición). |
 
-> El frontend incluye botones de **acceso rápido** para cada rol en el modal de inicio de sesión.
+> 💡 En la pantalla de inicio de sesión de la aplicación web se dispone de botones de **Acceso Rápido** para ingresar con cualquiera de estas cuentas con un solo clic.
 
 ---
 
-## 6. Ejecutar Pruebas Automatizadas (Harness Engineering)
+## 🌐 Enlaces del Entorno en Ejecución
 
-La suite de pruebas automatizadas valida los **12 escenarios de aceptación (P01 a P12)**:
+* **Aplicación Web Principal:** [http://localhost:8000](http://localhost:8000)
+* **Documentación Interactiva Swagger / OpenAPI:** [http://localhost:8000/docs](http://localhost:8000/docs)
+* **Especificación ReDoc:** [http://localhost:8000/redoc](http://localhost:8000/redoc)
+* **Endpoint de Ejecución del Test Harness:** [http://localhost:8000/harness/ejecutar](http://localhost:8000/harness/ejecutar)
+
+---
+
+## 🧪 Ejecución de la Suite de Pruebas (Harness P01–P18)
+
+Para comprobar de forma 100% automatizada el cumplimiento de los 18 criterios de aceptación, ejecuta:
 
 ```bash
 docker exec parcial_backend pytest tests/test_main.py -v
 ```
 
-**Resultado esperado:** Todos los tests deben mostrar `PASSED` en verde (12 passed).
+### Salida Esperada:
+```text
+tests/test_main.py::test_P01_autenticacion_cierre_y_usuario_inactivo PASSED   [  5%]
+tests/test_main.py::test_P02_importacion_repetible_catalogo PASSED           [ 11%]
+tests/test_main.py::test_P03_carga_5000_dispositivos_unicos_y_repeticion PASSED [ 16%]
+tests/test_main.py::test_P04_jerarquia_cmdb_y_rechazo_de_ciclos PASSED       [ 22%]
+tests/test_main.py::test_P05_creacion_tickets_referencias_validas_e_invalidas PASSED [ 27%]
+tests/test_main.py::test_P06_asignacion_cola_a_roles_y_usuarios_politica_permisos PASSED [ 33%]
+tests/test_main.py::test_P07_ordenamiento_reproducible_y_concurrencia_tomar_ticket PASSED [ 38%]
+tests/test_main.py::test_P08_transferencia_entre_colas_con_historial_y_validacion PASSED [ 44%]
+tests/test_main.py::test_P09_ejecucion_ruta_completa_7_procesos_y_transiciones_invalidas PASSED [ 50%]
+tests/test_main.py::test_P10_cambio_sin_aprobacion_y_acceso_autoaprobado_rechazados PASSED [ 55%]
+tests/test_main.py::test_P11_eventos_E0_E3_y_vinculacion_incidentes_sin_duplicar PASSED [ 61%]
+tests/test_main.py::test_P12_registro_I0_I6_y_reglas_complementarias PASSED  [ 66%]
+tests/test_main.py::test_P13_incidente_vinculado_a_problema_y_cambio PASSED   [ 72%]
+tests/test_main.py::test_P14_recorrido_ci_servicio_y_manejo_de_ciclos PASSED [ 77%]
+tests/test_main.py::test_P15_cierre_sin_resolucion_reapertura_y_bitacora PASSED [ 83%]
+tests/test_main.py::test_P16_filtros_y_paginacion_5000_dispositivos PASSED   [ 88%]
+tests/test_main.py::test_P17_indicadores_con_datos_controlados PASSED        [ 94%]
+tests/test_main.py::test_P18_reinicio_de_contenedores_y_persistencia PASSED   [100%]
 
-Para ejecutar un test específico:
-
-```bash
-docker exec parcial_backend pytest tests/test_main.py::test_P01_inicio_sesion_valido_e_invalido -v
+====================== 18 passed in 7.21s ======================
 ```
 
 ---
 
-## 7. Gestión del Entorno
+## 📚 Índice de Documentación Técnica Formal
 
-### Detener los contenedores (preservando datos)
-
-```bash
-docker compose down
-```
-
-Al volver a levantarlos con `docker compose up -d`, todos los datos persisten en el volumen `db_data`.
-
-### Reinicio completo (limpieza total para re-evaluación)
-
-```bash
-docker compose down -v
-```
-
-Este comando elimina los contenedores **y el volumen** de datos. Luego debes repetir el paso 4 completo.
-
-### Reconstruir la imagen después de cambios en el código
-
-```bash
-docker compose up --build -d
-```
-
----
-
-## 8. Estructura del Proyecto
-
-```
-parcial-catalogo-servicios-201712620/
-├── src/
-│   ├── main.py         # API REST FastAPI — todos los endpoints
-│   ├── models.py       # Modelos SQLAlchemy (ORM)
-│   ├── schemas.py      # Esquemas Pydantic (validación)
-│   ├── auth.py         # Autenticación JWT + bcrypt
-│   ├── database.py     # Conexión PostgreSQL (engine, sesiones)
-│   └── static/
-│       ├── index.html  # SPA — Interfaz de usuario
-│       ├── style.css   # Sistema de diseño premium
-│       └── app.js      # Lógica de cliente (sin frameworks)
-├── scripts/
-│   ├── init_db.py      # Creador de tablas (Paso 1)
-│   ├── import_excel.py # ETL desde Excel (Paso 2)
-│   └── create_admin.py # Seeder org. y usuarios (Paso 3)
-├── tests/
-│   └── test_main.py    # Suite pytest (P01–P12)
-├── data/
-│   └── CatalogoServicios.xlsx  # Archivo fuente original preservado
-├── docs/
-│   ├── RESOLUCION.md   # Informe técnico completo (ER, decisiones, AI)
-│   ├── prompts/        # Fichas de prompts y mejoras iterativas
-│   ├── contexto/       # Documentación de contexto versionada
-│   └── evidencias/     # Capturas de pantalla y evidencias
-├── Dockerfile
-├── docker-compose.yml
-├── requirements.txt
-├── .env.example
-├── .env                # Variables de entorno (NO subir a GitHub real)
-├── .gitignore
-├── AGENTS.md           # Directivas para IA y registro de actualizaciones
-└── README.md           # Este archivo
-```
-
----
-
-## 9. Documentación Técnica
-
-| Documento | Ubicación | Contenido |
+| Documento | Ubicación | Contenido y Alcance |
 |---|---|---|
-| **AGENTS.md** | Raíz del proyecto | Directivas operativas para IA, protección anti-inyección, registro de 2 actualizaciones versionadas |
-| **RESOLUCION.md** | `docs/RESOLUCION.md` | Informe técnico: Diagrama ER en Mermaid, mapeo Excel, matriz de cumplimiento P01–P12, reflexión sobre IA |
-| **prompts_utilizados.md** | `docs/prompts/` | Fichas técnicas de ≥5 prompts y registro de ≥2 iteraciones empíricas de mejora |
-| **docs/contexto/** | `docs/contexto/` | Documentación de contexto suministrada en 3 fases de desarrollo |
+| **Informe de Arquitectura** | [`docs/RESOLUCION.md`](docs/RESOLUCION.md) | Justificación de tecnologías, decisiones de diseño, concurrencia y seguridad. |
+| **Modelo y Diccionario de Datos** | [`docs/MODELO.md`](docs/MODELO.md) | Diagrama ER integral Mermaid, diccionario de campos y mapeo de taxonomía. |
+| **Especificación de Procesos ITIL** | [`docs/PROCESOS.md`](docs/PROCESOS.md) | Ciclos de vida de los 7 procesos, diagramas de estado, SLAs y niveles de escalamiento. |
+| **Disciplinas de Ingeniería con IA** | [`docs/IA.md`](docs/IA.md) | 8 prompts reales, 2 mejoras comparativas, 3 ciclos de loop engineering y grafos. |
+| **Matriz de Pruebas Automatizadas** | [`docs/PRUEBAS.md`](docs/PRUEBAS.md) | Matriz de trazabilidad exhaustiva de los escenarios P01 a P18. |
+| **Reglas de Contexto y Asistentes** | [`AGENTS.md`](AGENTS.md) | Reglas operativas, guardrails de seguridad y trazabilidad de actualizaciones. |

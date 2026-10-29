@@ -241,9 +241,22 @@ def import_data():
             print(f" * {obs}")
         print("========================================================================\n")
 
+        return {
+            "n1_total": total_n1_db,
+            "n2_total": total_n2_db,
+            "creados_n1": creados_n1,
+            "actualizados_n1": actualizados_n1,
+            "omitidos_n1": omitidos_n1,
+            "creados_n2": creados_n2,
+            "actualizados_n2": actualizados_n2,
+            "omitidos_n2": omitidos_n2,
+            "observaciones": observaciones
+        }
+
     except Exception as e:
         print(f"Error procesando archivo Excel: {e}")
         db.rollback()
+        return None
     finally:
         db.close()
 
