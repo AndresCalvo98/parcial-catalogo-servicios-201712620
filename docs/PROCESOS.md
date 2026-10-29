@@ -215,3 +215,4 @@ El Service Desk organiza el soporte técnico en niveles escalonados para maximiz
 
 ### 4.2. Política de Pausa en 'Pendiente Tercero'
 Cuando un ticket pasa al estado `Pendiente Tercero` (ejemplo: esperando piezas de repuesto en aduana o respuesta de un proveedor externo), el conteo del SLA se suspende formalmente para no penalizar la métrica del equipo interno. Al regresar a `En Progreso`, se acumulan los minutos transcurridos en el campo `tiempo_pausado_minutos` y se recalcula la fecha límite de vencimiento (`fecha_sla_resolucion`).
+

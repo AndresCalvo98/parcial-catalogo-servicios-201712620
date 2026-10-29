@@ -173,3 +173,4 @@ class GraphService:
                 "mecanismos de redundancia, alta disponibilidad (HA) o tolerancia a fallos."
             )
         }
+

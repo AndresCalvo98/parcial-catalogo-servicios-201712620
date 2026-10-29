@@ -362,3 +362,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     generate_cmdb_data(seed=args.seed, target_count=args.count, clean=args.clean)
+

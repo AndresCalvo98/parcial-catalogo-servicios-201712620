@@ -379,3 +379,4 @@ La Lección 22 estipula que una CMDB corporativa debe agrupar los Configuration 
 | 18 | `Criticidad` | `cmdb_ci` | mapeo a criticidad de servicio |
 | 19 | `Servicio Soportado` | `cmdb_ci_servicios` | `servicio_n2_id` |
 | 20 | `Comentarios/Notas` | `cmdb_ci` | `descripcion` (anotación) |
+

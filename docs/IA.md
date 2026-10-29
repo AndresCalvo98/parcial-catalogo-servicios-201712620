@@ -186,3 +186,4 @@ Cuando ocurre una falla en un componente crítico (ej. caída de un switch core 
 1. **Recorrido en Grafos hacia Arriba:** Identifica transitivamente todos los CIs que dependen del nodo afectado.
 2. **Cruce con Matriz de Negocio:** Consulta la tabla `cmdb_ci_servicios` para encontrar todos los `servicios_nivel2` respaldados por cualquiera de los CIs identificados.
 3. **Resultado:** Retorna en tiempo polinomial $O(V + E)$ la lista priorizada de servicios en riesgo, permitiendo al Service Desk elevar proactivamente la severidad del incidente.
+
