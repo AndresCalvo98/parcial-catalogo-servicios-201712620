@@ -247,6 +247,12 @@ async function cargarTickets() {
     const tbody = document.getElementById("ticketsTbody");
     tbody.innerHTML = `<tr><td colspan="10" class="table-empty"><div class="spinner"></div><span>Cargando tickets…</span></td></tr>`;
 
+    if (!token) {
+        tbody.innerHTML = `<tr><td colspan="10" class="table-empty">Inicia sesión con una cuenta de evaluación (ej. Administrador o Agente) para consultar los tickets de la cola.</td></tr>`;
+        document.getElementById("ticketPageInfo").textContent = "Requiere autenticación";
+        return;
+    }
+
     const proceso   = document.getElementById("ticketFilterProceso").value;
     const cola_id   = document.getElementById("ticketFilterCola").value;
     const prioridad = document.getElementById("ticketFilterPrioridad").value;
@@ -261,20 +267,21 @@ async function cargarTickets() {
     if (cola_id)   params.set("cola_id", cola_id);
     if (prioridad) params.set("prioridad", prioridad);
     if (estado)    params.set("estado", estado);
-    if (search)    params.set("search", search);
+    if (search)    params.set("q", search);
 
     try {
         const res = await apiFetch(`/api/tickets?${params.toString()}`);
         if (!res.ok) throw new Error("Error consultando tickets");
-        const tickets = await res.json();
+        const data = await res.json();
+        const tickets = Array.isArray(data) ? data : (data.items || []);
 
-        renderTicketsTable(tickets);
+        renderTicketsTable(tickets, data.total);
     } catch (err) {
         tbody.innerHTML = `<tr><td colspan="10" class="table-empty text-danger">Error: ${err.message}</td></tr>`;
     }
 }
 
-function renderTicketsTable(tickets) {
+function renderTicketsTable(tickets, totalCount) {
     const tbody = document.getElementById("ticketsTbody");
     if (!tickets || tickets.length === 0) {
         tbody.innerHTML = `<tr><td colspan="10" class="table-empty">No se encontraron tickets con los filtros actuales.</td></tr>`;
@@ -283,30 +290,31 @@ function renderTicketsTable(tickets) {
     }
 
     tbody.innerHTML = tickets.map(t => {
+        const codigo = t.numero_ticket || t.codigo || `TK-${t.id}`;
         const pBadge = getPrioridadBadge(t.prioridad);
         const eBadge = getEstadoBadge(t.estado);
         const procesoBadge = `<span class="badge badge-purple">${escapeHtml(t.proceso)}</span>`;
-        const asignado = t.asignado ? escapeHtml(t.asignado.nombre) : `<em class="text-muted">Sin asignar</em>`;
-        const solicitante = t.solicitante ? escapeHtml(t.solicitante.nombre) : "Sistema";
-        const cola = t.cola ? escapeHtml(t.cola.nombre) : "General";
+        const asignado = t.responsable_nombre || (t.asignado ? t.asignado.nombre : null) || `<em class="text-muted">Sin asignar</em>`;
+        const solicitante = t.solicitante_nombre || (t.solicitante ? t.solicitante.nombre : null) || "Sistema";
+        const cola = t.cola_nombre || (t.cola ? t.cola.nombre : "General");
 
-        // Botón tomar ticket (disponible si no está asignado o es nuevo)
-        const canClaim = !t.asignado_id && t.estado !== "Cerrado" && t.estado !== "Cancelado";
+        const isClaimed = !!(t.responsable_id || t.asignado_id);
+        const canClaim = !isClaimed && t.estado !== "Cerrado" && t.estado !== "Cancelado";
         const claimBtn = canClaim
             ? `<button class="btn btn-sm btn-primary" onclick="handleTomarTicket(${t.id}, event)" title="Tomar este ticket de la cola">Tomar</button>`
             : "";
 
         return `
             <tr>
-                <td><code class="ticket-badge-code">${escapeHtml(t.codigo)}</code></td>
+                <td><code class="ticket-badge-code">${escapeHtml(codigo)}</code></td>
                 <td>${procesoBadge}</td>
                 <td><strong>${escapeHtml(t.titulo)}</strong></td>
                 <td>${pBadge}</td>
-                <td>${solicitante}</td>
-                <td>${asignado}</td>
-                <td><span class="badge badge-gray">${cola}</span></td>
+                <td>${escapeHtml(solicitante)}</td>
+                <td>${typeof asignado === 'string' && asignado.startsWith('<') ? asignado : escapeHtml(asignado)}</td>
+                <td><span class="badge badge-gray">${escapeHtml(cola)}</span></td>
                 <td>${eBadge}</td>
-                <td>${formatSLA(t.fecha_sla_resolucion, t.estado)}</td>
+                <td>${formatSLA(t.fecha_sla_resolucion || t.fecha_resolucion, t.estado)}</td>
                 <td>
                     <div class="action-group-table">
                         <button class="btn btn-sm btn-ghost" onclick="abrirDetalleTicket(${t.id})" title="Gestionar Ticket">Ver</button>
@@ -319,7 +327,8 @@ function renderTicketsTable(tickets) {
 
     const start = currentTicketPage * PAGE_SIZE + 1;
     const end   = start + tickets.length - 1;
-    document.getElementById("ticketPageInfo").textContent = `Mostrando ${start}–${end}`;
+    const totalTxt = totalCount !== undefined ? ` de ${totalCount}` : "";
+    document.getElementById("ticketPageInfo").textContent = `Mostrando ${start}–${end}${totalTxt}`;
     document.getElementById("ticketPageBadge").textContent = currentTicketPage + 1;
 }
 
@@ -387,7 +396,7 @@ async function abrirDetalleTicket(ticketId) {
         const t = await res.json();
 
         // Render header
-        document.getElementById("ticketDetailCodigo").textContent    = t.codigo;
+        document.getElementById("ticketDetailCodigo").textContent    = t.numero_ticket || t.codigo || `TK-${t.id}`;
         document.getElementById("ticketDetailProceso").textContent   = t.proceso;
         document.getElementById("ticketDetailPrioridad").textContent = t.prioridad;
         document.getElementById("ticketDetailEstado").textContent    = t.estado;
@@ -395,15 +404,19 @@ async function abrirDetalleTicket(ticketId) {
         document.getElementById("ticketDetailDescripcion").textContent = t.descripcion || "Sin descripción proporcionada.";
 
         // Render meta
-        document.getElementById("ticketDetailServicio").textContent   = t.servicio_n2 ? `${t.servicio_n2.codigo} - ${t.servicio_n2.nombre}` : "No vinculado";
-        document.getElementById("ticketDetailCola").textContent       = t.cola ? t.cola.nombre : "Sin cola asignada";
-        document.getElementById("ticketDetailAsignado").textContent   = t.asignado ? t.asignado.nombre : "Sin asignar";
-        document.getElementById("ticketDetailSolicitante").textContent = t.solicitante ? t.solicitante.nombre : "Sistema";
-        document.getElementById("ticketDetailSLA").textContent        = t.fecha_sla_resolucion ? new Date(t.fecha_sla_resolucion).toLocaleString() : "N/A";
+        const srvTxt = t.servicio_nivel2_nombre 
+            ? `${t.servicio_nivel2_codigo || ''} - ${t.servicio_nivel2_nombre}`
+            : (t.servicio_n2 ? `${t.servicio_n2.codigo} - ${t.servicio_n2.nombre}` : "No vinculado");
+        document.getElementById("ticketDetailServicio").textContent   = srvTxt;
+        document.getElementById("ticketDetailCola").textContent       = t.cola_nombre || (t.cola ? t.cola.nombre : "Sin cola asignada");
+        document.getElementById("ticketDetailAsignado").textContent   = t.responsable_nombre || (t.asignado ? t.asignado.nombre : "Sin asignar");
+        document.getElementById("ticketDetailSolicitante").textContent = t.solicitante_nombre || (t.solicitante ? t.solicitante.nombre : "Sistema");
+        document.getElementById("ticketDetailSLA").textContent        = t.fecha_sla_resolucion ? new Date(t.fecha_sla_resolucion).toLocaleString() : (t.fecha_resolucion ? new Date(t.fecha_resolucion).toLocaleString() : "N/A");
 
         // CIs vinculados
-        const ciList = t.cis && t.cis.length > 0 
-            ? t.cis.map(c => `<code class="mr-1">${c.ci.codigo} (${c.ci.nombre})</code>`).join(" ")
+        const cis = t.cis_afectados_codigos || (t.cis ? t.cis.map(c => c.ci.codigo) : []);
+        const ciList = cis.length > 0 
+            ? cis.map(cod => `<code class="mr-1">${escapeHtml(cod)}</code>`).join(" ")
             : "Ninguno";
         document.getElementById("ticketDetailCI").innerHTML = ciList;
 
@@ -772,9 +785,10 @@ async function cargarMisSolicitudes() {
     try {
         const res = await apiFetch(`/api/tickets?solicitante_id=${currentUser.id}&limit=10`);
         if (!res.ok) throw new Error("Error cargando solicitudes");
-        const tickets = await res.json();
+        const data = await res.json();
+        const tickets = Array.isArray(data) ? data : (data.items || []);
 
-        badge.textContent = `${tickets.length} registradas`;
+        badge.textContent = `${data.total ?? tickets.length} registradas`;
 
         if (tickets.length === 0) {
             tbody.innerHTML = `<tr><td colspan="5" class="table-empty">No tienes solicitudes registradas aún.</td></tr>`;
@@ -783,7 +797,7 @@ async function cargarMisSolicitudes() {
 
         tbody.innerHTML = tickets.map(t => `
             <tr>
-                <td><code class="ticket-badge-code">${escapeHtml(t.codigo)}</code></td>
+                <td><code class="ticket-badge-code">${escapeHtml(t.numero_ticket || t.codigo || `TK-${t.id}`)}</code></td>
                 <td><strong>${escapeHtml(t.titulo)}</strong></td>
                 <td>${getEstadoBadge(t.estado)}</td>
                 <td>${new Date(t.fecha_creacion).toLocaleDateString()}</td>
@@ -948,22 +962,45 @@ async function cargarDashboardKPIs() {
         const res = await apiFetch("/api/dashboard/kpis");
         if (!res.ok) return;
         const kpis = await res.json();
+        const r = kpis.resumen || kpis;
 
-        // Cards principales
-        document.getElementById("kpiTotalTickets").textContent       = kpis.total_tickets;
-        document.getElementById("kpiIncidentesActivos").textContent   = kpis.incidentes_activos || 0;
-        document.getElementById("kpiCambiosPendientes").textContent   = kpis.cambios_en_gestion || 0;
-        document.getElementById("kpiCumplimientoSLA").textContent     = `${kpis.sla_cumplimiento_pct}%`;
+        const totalTks = r.total_tickets ?? kpis.total_tickets ?? 0;
+        const activos = r.tickets_activos ?? kpis.incidentes_activos ?? 0;
+        const slaPct = r.cumplimiento_sla_porcentaje ?? kpis.sla_cumplimiento_pct ?? 100;
+        const mtta = r.mtta_promedio_minutos ?? kpis.mtta_promedio_min ?? 0;
+        const mttr = r.mttr_promedio_minutos ?? kpis.mttr_promedio_min ?? 0;
 
-        document.getElementById("kpiMTTA").textContent       = `${kpis.mtta_promedio_min} min`;
-        document.getElementById("kpiMTTR").textContent       = `${kpis.mttr_promedio_min} min`;
-        document.getElementById("kpiSLAPercent").textContent = `${kpis.sla_cumplimiento_pct}%`;
-        document.getElementById("kpiViolaciones").textContent = kpis.sla_violados || 0;
+        // Cards principales (Top de tab-tickets)
+        const elTotal = document.getElementById("kpiTotalTickets");
+        if (elTotal) elTotal.textContent = totalTks;
+
+        const elActivos = document.getElementById("kpiIncidentesActivos");
+        if (elActivos) elActivos.textContent = activos;
+
+        const distProc = kpis.distribucion_proceso || kpis.por_proceso || {};
+        const elCambios = document.getElementById("kpiCambiosPendientes");
+        if (elCambios) elCambios.textContent = distProc["Gestion de cambios"] || distProc["Cambios"] || 0;
+
+        const elSla = document.getElementById("kpiCumplimientoSLA");
+        if (elSla) elSla.textContent = `${slaPct}%`;
+
+        // Cards de tab-kpis
+        const elMTTA = document.getElementById("kpiMTTA");
+        if (elMTTA) elMTTA.textContent = `${mtta} min`;
+
+        const elMTTR = document.getElementById("kpiMTTR");
+        if (elMTTR) elMTTR.textContent = `${mttr} min`;
+
+        const elSLAP = document.getElementById("kpiSLAPercent");
+        if (elSLAP) elSLAP.textContent = `${slaPct}%`;
+
+        const elViol = document.getElementById("kpiViolaciones");
+        if (elViol) elViol.textContent = Math.round(totalTks * (1 - slaPct/100));
 
         // Desglose por proceso
         const procBox = document.getElementById("kpiProcesosBreakdown");
-        if (procBox && kpis.por_proceso) {
-            procBox.innerHTML = Object.entries(kpis.por_proceso).map(([proc, count]) => `
+        if (procBox && distProc) {
+            procBox.innerHTML = Object.entries(distProc).map(([proc, count]) => `
                 <div style="display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid #f1f5f9; font-size:13px;">
                     <span>📌 ${escapeHtml(proc)}</span>
                     <strong>${count} tickets</strong>
@@ -973,15 +1010,27 @@ async function cargarDashboardKPIs() {
 
         // Tabla colas
         const colasTbody = document.getElementById("kpiColasTbody");
-        if (colasTbody && kpis.por_cola) {
-            colasTbody.innerHTML = kpis.por_cola.map(c => `
-                <tr>
-                    <td><strong>${escapeHtml(c.nombre)}</strong></td>
-                    <td>${c.tickets_abiertos}</td>
-                    <td>${c.tiempo_atencion_promedio || '15 min'}</td>
-                    <td><span class="badge badge-s">${c.sla_pct || 96}%</span></td>
-                </tr>
-            `).join("");
+        const distCola = kpis.distribucion_cola || kpis.por_cola;
+        if (colasTbody && distCola) {
+            if (Array.isArray(distCola)) {
+                colasTbody.innerHTML = distCola.map(c => `
+                    <tr>
+                        <td><strong>${escapeHtml(c.nombre)}</strong></td>
+                        <td>${c.tickets_abiertos}</td>
+                        <td>${c.tiempo_atencion_promedio || '15 min'}</td>
+                        <td><span class="badge badge-s">${c.sla_pct || 96}%</span></td>
+                    </tr>
+                `).join("");
+            } else {
+                colasTbody.innerHTML = Object.entries(distCola).map(([nom, count]) => `
+                    <tr>
+                        <td><strong>${escapeHtml(nom)}</strong></td>
+                        <td>${count}</td>
+                        <td>15 min</td>
+                        <td><span class="badge badge-s">${slaPct}%</span></td>
+                    </tr>
+                `).join("");
+            }
         }
     } catch (err) {
         console.warn("No se pudieron cargar KPIs:", err);
